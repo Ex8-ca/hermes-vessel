@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+*.apk
+*.wav
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/.kotlin/
+# No Gradle wrapper in git: the wrapper jar is a compiled archive (catalog rule 17). CI installs Gradle.
+android/gradlew
+android/gradlew.bat
+android/gradle/wrapper/

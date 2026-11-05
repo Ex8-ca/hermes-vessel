@@ -1,0 +1,8 @@
+name: companion
+version: 0.1.0
+description: "Give Hermes a phone as its body: a one-button realtime voice app that talks to your Hermes, on your ChatGPT sign-in."
+author: Ex8-ca
+requires_auth:
+  - openai-codex
+provides_tools: []
+provides_hooks: []
