@@ -11,3 +11,7 @@ android/.kotlin/
 android/gradlew
 android/gradlew.bat
 android/gradle/wrapper/
+# Signing keys never go in git (the release key lives in Actions secrets)
+*.jks
+*.keystore
+*.p12

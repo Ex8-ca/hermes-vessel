@@ -37,6 +37,14 @@ cp -r hermes-vessel/plugins/vessel ~/.hermes/plugins/vessel
 hermes plugins enable vessel
 ```
 
+## Get the app
+
+On your Android phone, download **[hermes-vessel.apk](https://github.com/Ex8-ca/hermes-vessel/releases/latest/download/hermes-vessel.apk)** from the [latest release](https://github.com/Ex8-ca/hermes-vessel/releases/latest) and open it (allow installs from your browser if Android asks). The pairing page links to the same file. Each release is built from source by this repo's GitHub Actions, signed with the Hermes Vessel release key and carries a build attestation:
+
+```bash
+gh attestation verify hermes-vessel.apk --repo Ex8-ca/hermes-vessel
+```
+
 ## Use
 
 ```bash
@@ -54,13 +62,14 @@ Settings (environment): `VESSEL_MODEL` (default `gpt-realtime-2.1`), `VESSEL_VOI
 
 One light, one tap. The light breathes while Hermes is idle, turns jade and swells with your voice while it listens, gathers orbiting sparks while Hermes works on something (with a timer, so silence never feels dead), and glows gold as it speaks. Hermes's words appear as live captions in its own typeface; tap the light to interrupt. Calls work like phone calls (Mute, End, a notification with End call), keep running with the screen off, and use a connected headset automatically. A chip shows whether your Hermes is reachable before you tap, and pairing is one tap from a link or QR code (or paste the link).
 
-Source in [`android/`](android/) (Kotlin, Jetpack Compose, OkHttp). The APK is built by this repository's GitHub Actions ([`.github/workflows/android.yml`](.github/workflows/android.yml)); tagged releases attach the APK with a GitHub build attestation. No binaries are committed — build locally with Gradle 8.14 (`gradle :app:assembleDebug` in `android/`, JDK 17).
+Source in [`android/`](android/) (Kotlin, Jetpack Compose, OkHttp). The APK is built by this repository's GitHub Actions ([`.github/workflows/android.yml`](.github/workflows/android.yml)); tagged releases attach the APK with a GitHub build attestation. No binaries are committed — build locally with Gradle 8.14 (`gradle :app:assembleDebug` in `android/`, JDK 17). Tagging `v*` builds the signed release; the key lives only in the repository's Actions secrets.
 
 The call runs in a foreground service (type `microphone`) with Android's voice-call audio path, so echo cancellation works on the speaker and a connected Bluetooth or wired headset is used automatically. You can talk over it to interrupt.
 
 ## What it does on your machine (disclosure)
 
 - **Microphone:** while a call is active the phone streams microphone audio to the plugin server, which forwards it to OpenAI Realtime. Nothing is streamed when no call is active; the call shows an ongoing notification with a Hang up button.
+- **The app download:** the pairing page sends the phone to this repo's GitHub release for the installed plugin version (`releases/download/v<version>/hermes-vessel.apk`). The plugin itself never downloads or runs a binary.
 - **Background server:** `hermes vessel serve` listens on `127.0.0.1:8796`. Expose it only on your private network (for example `tailscale serve`, not Funnel).
 - **The pairing token is a key to your Hermes:** whoever holds it can start voice sessions on your ChatGPT account and ask your Hermes to do things with your tools. It lives in `~/.hermes/plugin-data/vessel/pair_token` (mode 0600); delete the file and restart the server to rotate it.
 - **Credentials:** the OpenAI session is minted through Hermes (`credentialed_provider_request`); the plugin never sees your ChatGPT token, only a short-lived session secret. The Hermes API key is read through Hermes's secret scope.

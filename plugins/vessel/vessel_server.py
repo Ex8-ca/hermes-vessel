@@ -84,8 +84,27 @@ def pair_token() -> str:
 
 
 def _apk_path() -> Optional[Path]:
+    """A locally built app (developers): <plugin data>/app.apk. Normally absent."""
     path = _data_dir() / "app.apk"
     return path if path.is_file() else None
+
+
+def _plugin_version() -> str:
+    try:
+        for line in (Path(__file__).with_name("plugin.yaml")).read_text(encoding="utf-8").splitlines():
+            if line.startswith("version:"):
+                return line.split(":", 1)[1].strip().strip("\"'")
+    except OSError:
+        pass
+    return "0.1.0"
+
+
+RELEASES = "https://github.com/Ex8-ca/hermes-vessel/releases"
+
+
+def _release_apk_url() -> str:
+    """The signed, attested app built by this repo's GitHub Actions for this plugin version."""
+    return f"{RELEASES}/download/v{_plugin_version()}/hermes-vessel.apk"
 
 
 # --------------------------------------------------------------------------- persona
@@ -576,7 +595,8 @@ def make_app():
     async def apk(_request):
         path = _apk_path()
         if path is None:
-            return web.Response(status=404, text="No app build has been published yet.")
+            # The official release for this plugin version, straight from GitHub.
+            raise web.HTTPFound(_release_apk_url())
         return web.FileResponse(
             path,
             headers={

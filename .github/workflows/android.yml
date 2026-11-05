@@ -59,18 +59,61 @@ jobs:
       - name: Provide SDK location
         run: echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties
 
-      - name: Build
-        run: gradle :app:assembleDebug --no-daemon
-
-      - name: Collect APK
+      # Tags (v0.1.0, v0.2.0-rc1, ...) build a signed release; everything else a debug APK.
+      - name: Decide build type
+        id: kind
         run: |
-          cp app/build/outputs/apk/debug/app-debug.apk "$GITHUB_WORKSPACE/hermes-vessel.apk"
-          sha256sum "$GITHUB_WORKSPACE/hermes-vessel.apk" | tee -a "$GITHUB_STEP_SUMMARY"
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "release=true" >> "$GITHUB_OUTPUT"
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            echo "version=0.0.0-dev.${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Load release key
+        if: steps.kind.outputs.release == 'true'
+        env:
+          KEYSTORE_B64: ${{ secrets.VESSEL_KEYSTORE_B64 }}
+        run: |
+          set -euo pipefail
+          if [ -z "$KEYSTORE_B64" ]; then
+            echo "::error::The VESSEL_KEYSTORE_B64 secret is missing; refusing to publish a release without the release key."
+            exit 1
+          fi
+          echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          echo "VESSEL_KEYSTORE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+
+      - name: Build
+        env:
+          VESSEL_KEYSTORE_PASSWORD: ${{ secrets.VESSEL_KEYSTORE_PASSWORD }}
+          VESSEL_KEY_ALIAS: ${{ secrets.VESSEL_KEY_ALIAS }}
+          VESSEL_KEY_PASSWORD: ${{ secrets.VESSEL_KEY_PASSWORD }}
+          VERSION: ${{ steps.kind.outputs.version }}
+        run: |
+          set -euo pipefail
+          if [ "${{ steps.kind.outputs.release }}" = "true" ]; then
+            gradle :app:assembleRelease --no-daemon -PvesselVersionName="$VERSION" -PvesselVersionCode="$GITHUB_RUN_NUMBER"
+            cp app/build/outputs/apk/release/app-release.apk "$GITHUB_WORKSPACE/hermes-vessel.apk"
+          else
+            gradle :app:assembleDebug --no-daemon
+            cp app/build/outputs/apk/debug/app-debug.apk "$GITHUB_WORKSPACE/hermes-vessel.apk"
+          fi
+          rm -f "$RUNNER_TEMP/release.jks"
+
+      - name: Checksum
+        working-directory: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          sha256sum hermes-vessel.apk | tee hermes-vessel.apk.sha256
+          { echo "### hermes-vessel.apk (${{ steps.kind.outputs.version }})"; echo '```'; cat hermes-vessel.apk.sha256; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: hermes-vessel-apk
-          path: hermes-vessel.apk
+          name: hermes-vessel-${{ steps.kind.outputs.version }}
+          path: |
+            hermes-vessel.apk
+            hermes-vessel.apk.sha256
 
       # Attestations need a public repository (or GitHub Enterprise Cloud).
       - name: Attest build provenance
@@ -80,11 +123,31 @@ jobs:
           subject-path: hermes-vessel.apk
 
       - name: Publish release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: steps.kind.outputs.release == 'true'
+        working-directory: ${{ github.workspace }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
         run: |
-          gh release create "$GITHUB_REF_NAME" --title "Hermes Vessel $GITHUB_REF_NAME" --generate-notes \
-            "$GITHUB_WORKSPACE/hermes-vessel.apk" \
-            || gh release upload "$GITHUB_REF_NAME" "$GITHUB_WORKSPACE/hermes-vessel.apk" --clobber
+          set -euo pipefail
+          cat > notes.md <<EOF
+          ## Install on your phone
+
+          1. On your Android phone (Android 8 or newer), tap **hermes-vessel.apk** below to download it.
+          2. Open it. If Android asks, allow installs from your browser, then tap **Install**.
+          3. On the computer running Hermes, run \`hermes vessel pair\`, scan the QR code with the phone and tap **Pair this phone**.
+
+          The app is signed with the Hermes Vessel release key (\`CN=Hermes Vessel, O=Ex8-ca, C=CA\`), so later versions install over this one.
+
+          ## Verify this build
+
+          \`\`\`
+          sha256sum -c hermes-vessel.apk.sha256
+          gh attestation verify hermes-vessel.apk --repo ${GITHUB_REPOSITORY}
+          \`\`\`
+          EOF
+          PRE=""
+          if [[ "$GITHUB_REF_NAME" == *-* ]]; then PRE="--prerelease"; fi
+          gh release create "$GITHUB_REF_NAME" $PRE --title "Hermes Vessel $GITHUB_REF_NAME" --notes-file notes.md \
+            hermes-vessel.apk hermes-vessel.apk.sha256 \
+            || gh release upload "$GITHUB_REF_NAME" hermes-vessel.apk hermes-vessel.apk.sha256 --clobber
