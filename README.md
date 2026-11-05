@@ -49,6 +49,7 @@ gh attestation verify hermes-vessel.apk --repo Ex8-ca/hermes-vessel
 
 ```bash
 hermes vessel selftest      # mints a voice session, speaks one line, saves it as a WAV — no phone needed
+hermes vessel selftest --voice coral --say "Hi, it's Hermes." --out coral.wav   # hear any voice
 hermes vessel serve         # the phone link server on 127.0.0.1:8796
 tailscale serve --bg --set-path /vessel http://127.0.0.1:8796   # tailnet-only HTTPS for the phone
 hermes vessel pair          # prints a QR code and the pairing link
@@ -56,11 +57,13 @@ hermes vessel pair          # prints a QR code and the pairing link
 
 Scan the QR code with the phone's camera (or open the link on the phone): download the app, install it, tap **Pair this phone**, then tap the light.
 
-Settings (environment): `VESSEL_MODEL` (default `gpt-realtime-2.1`), `VESSEL_VOICE` (`marin`; also `shimmer`, `coral`, `sage`, `cedar`, …), `VESSEL_TURN_DETECTION` (`server_vad`, or `semantic_vad` if you pause mid-thought), `VESSEL_SILENCE_MS` (`550`), `VESSEL_API_SERVER_URL` (`http://127.0.0.1:6789`).
+**Choosing a voice:** in the app, tap the gear (or the host chip) → **Voice**. Each of the ten voices has a play button for a short sample, and a tap picks it for your next call. The choice lives on the phone, so two phones can use different voices.
+
+Settings (environment): `VESSEL_MODEL` (default `gpt-realtime-2.1`), `VESSEL_VOICE` (the default for phones that haven't picked one: `marin`; also `shimmer`, `coral`, `sage`, `alloy`, `cedar`, `ash`, `ballad`, `echo`, `verse`), `VESSEL_TURN_DETECTION` (`server_vad`, or `semantic_vad` if you pause mid-thought), `VESSEL_SILENCE_MS` (`550`), `VESSEL_API_SERVER_URL` (`http://127.0.0.1:6789`).
 
 ## The Android app
 
-One light, one tap. The light breathes while Hermes is idle, turns jade and swells with your voice while it listens, gathers orbiting sparks while Hermes works on something (with a timer, so silence never feels dead), and glows gold as it speaks. Hermes's words appear as live captions in its own typeface; tap the light to interrupt. Calls work like phone calls (Mute, End, a notification with End call), keep running with the screen off, and use a connected headset automatically. A chip shows whether your Hermes is reachable before you tap, and pairing is one tap from a link or QR code (or paste the link).
+One light, one tap. The light breathes while Hermes is idle, turns jade and swells with your voice while it listens, gathers orbiting sparks while Hermes works on something (with a timer, so silence never feels dead), and glows gold as it speaks. Hermes's words appear as live captions in its own typeface; tap the light to interrupt. Calls work like phone calls (Mute, End, a notification with End call), keep running with the screen off, and use a connected headset automatically. A chip shows whether your Hermes is reachable before you tap, and pairing is one tap from a link or QR code (or paste the link). Settings has the voice picker (with samples), the paired Hermes and Unpair.
 
 Source in [`android/`](android/) (Kotlin, Jetpack Compose, OkHttp). The APK is built by this repository's GitHub Actions ([`.github/workflows/android.yml`](.github/workflows/android.yml)); tagged releases attach the APK with a GitHub build attestation. No binaries are committed — build locally with Gradle 8.14 (`gradle :app:assembleDebug` in `android/`, JDK 17). Tagging `v*` builds the signed release; the key lives only in the repository's Actions secrets.
 
@@ -73,6 +76,7 @@ The call runs in a foreground service (type `microphone`) with Android's voice-c
 - **Background server:** `hermes vessel serve` listens on `127.0.0.1:8796`. Expose it only on your private network (for example `tailscale serve`, not Funnel).
 - **The pairing token is a key to your Hermes:** whoever holds it can start voice sessions on your ChatGPT account and ask your Hermes to do things with your tools. It lives in `~/.hermes/plugin-data/vessel/pair_token` (mode 0600); delete the file and restart the server to rotate it.
 - **Credentials:** the OpenAI session is minted through Hermes (`credentialed_provider_request`); the plugin never sees your ChatGPT token, only a short-lived session secret. The Hermes API key is read through Hermes's secret scope.
+- **Voice samples:** the first time a phone plays a voice's sample, the server records one short line in that voice through OpenAI Realtime (one brief session on your ChatGPT sign-in) and caches it in `~/.hermes/plugin-data/vessel/voices/`; the phone caches it too. The voice list and samples need the pairing token.
 - **Logs:** `~/.hermes/plugin-data/vessel/server.log` records connections, turn events and the first 200 characters of each request to Hermes and its answer. No audio is stored.
 - **Persona:** the voice gets your `SOUL.md`, `USER.md` and the current local time as its instructions, so they are sent to OpenAI at the start of each call.
 

@@ -99,12 +99,18 @@ fun visibleState(status: String, running: Boolean, playing: Boolean, muted: Bool
 @Composable
 fun VesselApp(
   host: String?,
+  showSettings: Boolean,
+  appVersion: String,
   onTalk: () -> Unit,
   onEnd: () -> Unit,
   onMute: () -> Unit,
   onInterrupt: () -> Unit,
   onPairLink: (String) -> Boolean,
   onUnpair: () -> Unit,
+  onOpenSettings: () -> Unit,
+  onCloseSettings: () -> Unit,
+  onSelectVoice: (String) -> Unit,
+  onPreviewVoice: (String) -> Unit,
 ) {
   val status by TalkState.status.collectAsState()
   val running by TalkState.running.collectAsState()
@@ -143,7 +149,21 @@ fun VesselApp(
     if (host == null) {
       PairScreen(onPairLink)
     } else {
-      CallScreen(host, state, level, running, muted, onTalk, onEnd, onMute, onInterrupt, onUnpair)
+      CallScreen(host, state, level, running, muted, onTalk, onEnd, onMute, onInterrupt, onOpenSettings)
+      run {
+        val online by TalkState.hostOnline.collectAsState()
+        SettingsSheet(
+          visible = showSettings,
+          host = host,
+          online = online,
+          running = running,
+          appVersion = appVersion,
+          onSelectVoice = onSelectVoice,
+          onPreviewVoice = onPreviewVoice,
+          onUnpair = onUnpair,
+          onDismiss = onCloseSettings,
+        )
+      }
     }
   }
 }
@@ -159,7 +179,7 @@ private fun CallScreen(
   onEnd: () -> Unit,
   onMute: () -> Unit,
   onInterrupt: () -> Unit,
-  onUnpair: () -> Unit,
+  onOpenSettings: () -> Unit,
 ) {
   val online by TalkState.hostOnline.collectAsState()
   val detail by TalkState.detail.collectAsState()
@@ -168,7 +188,6 @@ private fun CallScreen(
   val lines by TalkState.lines.collectAsState()
   val live by TalkState.liveCaption.collectAsState()
   val lastCall by TalkState.lastCall.collectAsState()
-  var askUnpair by remember { mutableStateOf(false) }
 
   val elapsed by produceState(0L, since) {
     value = 0L
@@ -192,7 +211,7 @@ private fun CallScreen(
     Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).padding(horizontal = 24.dp),
     horizontalAlignment = Alignment.CenterHorizontally,
   ) {
-    Header(host = host, online = online, onHostClick = { askUnpair = true })
+    Header(host = host, online = online, onSettings = onOpenSettings)
     Spacer(Modifier.height((screenHeight * 0.05f).dp))
 
     val orbAction = when {
@@ -261,25 +280,6 @@ private fun CallScreen(
     Spacer(Modifier.height(16.dp))
   }
 
-  if (askUnpair) {
-    AlertDialog(
-      onDismissRequest = { askUnpair = false },
-      containerColor = Panel,
-      title = { Text("Paired with $host", style = Type.headline.copy(fontSize = 24.sp)) },
-      text = {
-        Text(
-          "This phone talks to the Hermes running on $host. Unpair it to connect to a different Hermes.",
-          style = Type.body,
-        )
-      },
-      confirmButton = {
-        TextButton(onClick = { askUnpair = false; onUnpair() }) { Text("Unpair", color = Coral) }
-      },
-      dismissButton = {
-        TextButton(onClick = { askUnpair = false }) { Text("Keep", color = Ivory) }
-      },
-    )
-  }
 }
 
 private fun title(state: String, online: Boolean? = null): String = when (state) {
@@ -315,11 +315,25 @@ private fun subtitle(state: String, online: Boolean?, detail: String, route: Str
   }
 
 @Composable
-private fun Header(host: String?, online: Boolean?, onHostClick: () -> Unit) {
+private fun Header(host: String?, online: Boolean?, onSettings: () -> Unit) {
   Row(Modifier.fillMaxWidth().padding(top = 10.dp), verticalAlignment = Alignment.CenterVertically) {
     Text("Hermes", style = Type.wordmark)
     Spacer(Modifier.weight(1f))
-    if (host != null) HostChip(host, online, onHostClick)
+    if (host != null) {
+      HostChip(host, online, onSettings)
+      Spacer(Modifier.width(8.dp))
+      Box(
+        Modifier
+          .size(36.dp)
+          .clip(CircleShape)
+          .background(Color.White.copy(alpha = 0.05f))
+          .border(1.dp, Color.White.copy(alpha = 0.10f), CircleShape)
+          .clickable(role = Role.Button, onClickLabel = "Settings", onClick = onSettings),
+        contentAlignment = Alignment.Center,
+      ) {
+        Icon(painterResource(R.drawable.ic_settings), contentDescription = "Settings", tint = Ivory.copy(alpha = 0.8f), modifier = Modifier.size(18.dp))
+      }
+    }
   }
 }
 
@@ -339,7 +353,7 @@ private fun HostChip(host: String, online: Boolean?, onClick: () -> Unit) {
       .clip(shape)
       .background(Color.White.copy(alpha = 0.05f))
       .border(1.dp, Color.White.copy(alpha = 0.10f), shape)
-      .clickable(onClickLabel = "Pairing settings", onClick = onClick)
+      .clickable(onClickLabel = "Settings", onClick = onClick)
       .padding(horizontal = 12.dp, vertical = 7.dp),
     verticalAlignment = Alignment.CenterVertically,
   ) {
@@ -445,7 +459,7 @@ private fun PairScreen(onPairLink: (String) -> Boolean) {
       .padding(horizontal = 24.dp),
     horizontalAlignment = Alignment.CenterHorizontally,
   ) {
-    Header(host = null, online = null, onHostClick = {})
+    Header(host = null, online = null, onSettings = {})
     Spacer(Modifier.height(28.dp))
     Orb(state = "idle", level = 0f, modifier = Modifier.size(170.dp))
     Spacer(Modifier.height(28.dp))

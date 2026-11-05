@@ -14,7 +14,15 @@ object Prefs {
     sp(c).edit().putString("url", url).putString("token", token).apply()
   }
 
+  /** The chosen voice id, or "" for the server's default. Kept across re-pairing. */
+  fun voice(c: Context): String = sp(c).getString("voice", "") ?: ""
+
+  fun saveVoice(c: Context, voice: String) {
+    sp(c).edit().putString("voice", voice).apply()
+  }
+
+  /** Forget the pairing (keeps the voice choice). */
   fun clear(c: Context) {
-    sp(c).edit().clear().apply()
+    sp(c).edit().remove("url").remove("token").apply()
   }
 }

@@ -5,6 +5,8 @@ import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.graphics.Color as AndroidColor
+import android.media.AudioAttributes
+import android.media.MediaPlayer
 import android.os.Build
 import android.os.Bundle
 import android.view.HapticFeedbackConstants
@@ -33,9 +35,21 @@ import kotlin.math.sin
 
 class MainActivity : ComponentActivity() {
   private val http = OkHttpClient.Builder().callTimeout(6, TimeUnit.SECONDS).build()
+  /** The first sample of a voice is recorded on the server, which takes a few seconds. */
+  private val sampleHttp = OkHttpClient.Builder().callTimeout(75, TimeUnit.SECONDS).build()
   /** Short name of the paired Hermes host, or null when this phone isn't paired. */
   private val pairedHost = MutableStateFlow<String?>(null)
+  private val showSettings = MutableStateFlow(false)
   private var demoJob: Job? = null
+  private var preview: MediaPlayer? = null
+  private var previewJob: Job? = null
+  private val appVersion: String by lazy {
+    try {
+      packageManager.getPackageInfo(packageName, 0).versionName ?: ""
+    } catch (e: Exception) {
+      ""
+    }
+  }
 
   private val permissions =
     registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { _ ->
@@ -53,13 +67,17 @@ class MainActivity : ComponentActivity() {
       navigationBarStyle = SystemBarStyle.dark(AndroidColor.TRANSPARENT),
     )
     super.onCreate(savedInstanceState)
+    TalkState.selectedVoice.value = Prefs.voice(this).ifBlank { Voices.DEFAULT }
     refreshPairing()
     handleIntent(intent)
     setContent {
       VesselTheme {
         val host by pairedHost.collectAsState()
+        val settingsOpen by showSettings.collectAsState()
         VesselApp(
           host = host,
+          showSettings = settingsOpen,
+          appVersion = appVersion,
           onTalk = ::onTalk,
           onEnd = {
             haptic(HapticFeedbackConstants.VIRTUAL_KEY)
@@ -75,6 +93,10 @@ class MainActivity : ComponentActivity() {
           },
           onPairLink = ::pairFrom,
           onUnpair = ::unpair,
+          onOpenSettings = ::openSettings,
+          onCloseSettings = ::closeSettings,
+          onSelectVoice = ::selectVoice,
+          onPreviewVoice = ::togglePreview,
         )
       }
     }
@@ -99,6 +121,11 @@ class MainActivity : ComponentActivity() {
   override fun onResume() {
     super.onResume()
     if (demoJob == null && !TalkState.running.value) checkHealth()
+  }
+
+  override fun onStop() {
+    super.onStop()
+    stopPreview()
   }
 
   private fun hasMic() =
@@ -151,9 +178,122 @@ class MainActivity : ComponentActivity() {
 
   private fun unpair() {
     if (TalkState.running.value) TalkService.stop(this)
+    closeSettings()
     Prefs.clear(this)
     TalkState.hostOnline.value = null
     refreshPairing()
+  }
+
+  private fun openSettings() {
+    TalkState.previewError.value = ""
+    showSettings.value = true
+    loadVoices()
+    if (!TalkState.running.value) checkHealth()
+  }
+
+  private fun closeSettings() {
+    stopPreview()
+    showSettings.value = false
+  }
+
+  private fun selectVoice(id: String) {
+    Prefs.saveVoice(this, id)
+    TalkState.selectedVoice.value = id
+    haptic(HapticFeedbackConstants.VIRTUAL_KEY)
+  }
+
+  /** Ask the paired Hermes which voices it offers (falls back to the built-in list). */
+  private fun loadVoices() {
+    val url = Pairing.voicesUrl(Prefs.url(this), Prefs.token(this)) ?: return
+    lifecycleScope.launch {
+      val result = withContext(Dispatchers.IO) {
+        try {
+          http.newCall(Request.Builder().url(url).build()).execute().use { response ->
+            if (!response.isSuccessful) return@use null
+            val json = JSONObject(response.body?.string() ?: "{}")
+            val array = json.optJSONArray("voices") ?: return@use null
+            val list = (0 until array.length()).mapNotNull { i ->
+              val o = array.optJSONObject(i) ?: return@mapNotNull null
+              val id = o.optString("id")
+              if (id.isBlank()) null else Voice(id, o.optString("name", id), o.optString("note"), o.optString("tone"))
+            }
+            if (list.isEmpty()) null else json.optString("default", Voices.DEFAULT) to list
+          }
+        } catch (e: Exception) {
+          null
+        }
+      } ?: return@launch
+      TalkState.voices.value = result.second
+      // No choice made yet: show the voice this Hermes uses by default.
+      if (Prefs.voice(this@MainActivity).isBlank()) TalkState.selectedVoice.value = result.first
+    }
+  }
+
+  /** Play (or stop) a short sample of a voice. Samples are cached on the phone after the first listen. */
+  private fun togglePreview(id: String) {
+    val same = TalkState.previewing.value == id
+    stopPreview()
+    if (same || TalkState.running.value) return
+    val url = Pairing.sampleUrl(Prefs.url(this), Prefs.token(this), id) ?: return
+    TalkState.previewError.value = ""
+    TalkState.previewing.value = id
+    TalkState.previewLoading.value = true
+    previewJob = lifecycleScope.launch {
+      val file = java.io.File(cacheDir, "voice-$id.wav")
+      val ready = file.length() > 1024 || withContext(Dispatchers.IO) {
+        try {
+          sampleHttp.newCall(Request.Builder().url(url).build()).execute().use { response ->
+            val body = response.body
+            if (!response.isSuccessful || body == null) return@use false
+            val part = java.io.File(cacheDir, "voice-$id.part")
+            body.byteStream().use { input -> part.outputStream().use { input.copyTo(it) } }
+            part.renameTo(file)
+          }
+        } catch (e: Exception) {
+          false
+        }
+      }
+      if (TalkState.previewing.value != id) return@launch
+      TalkState.previewLoading.value = false
+      if (!ready) {
+        TalkState.previewing.value = null
+        TalkState.previewError.value = "Couldn't get that sample from your Hermes. Try again in a moment."
+        return@launch
+      }
+      try {
+        val player = MediaPlayer()
+        preview = player
+        player.setAudioAttributes(
+          AudioAttributes.Builder()
+            .setUsage(AudioAttributes.USAGE_MEDIA)
+            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+            .build(),
+        )
+        player.setDataSource(file.path)
+        player.setOnCompletionListener { if (preview === it) stopPreview() }
+        player.prepare()
+        player.start()
+      } catch (e: Exception) {
+        stopPreview()
+        file.delete()
+      }
+    }
+  }
+
+  private fun stopPreview() {
+    previewJob?.cancel()
+    previewJob = null
+    preview?.let {
+      try {
+        it.stop()
+      } catch (e: Exception) {
+        // not started yet
+      }
+      it.release()
+    }
+    preview = null
+    TalkState.previewing.value = null
+    TalkState.previewLoading.value = false
   }
 
   /** Ask the paired Hermes whether it's reachable, so the chip is honest before you tap. */
@@ -176,6 +316,7 @@ class MainActivity : ComponentActivity() {
   private fun onTalk() {
     if (TalkState.running.value) return
     if (pairedHost.value == null) return
+    stopPreview()
     val wanted = mutableListOf(Manifest.permission.RECORD_AUDIO)
     if (Build.VERSION.SDK_INT >= 33) wanted += Manifest.permission.POST_NOTIFICATIONS
     if (Build.VERSION.SDK_INT >= 31) wanted += Manifest.permission.BLUETOOTH_CONNECT
@@ -211,6 +352,11 @@ class MainActivity : ComponentActivity() {
     demoJob?.cancel()
     val s = TalkState
     s.resetCall()
+    showSettings.value = state == "settings"
+    if (state == "settings") {
+      s.selectedVoice.value = "marin"
+      s.previewing.value = "shimmer"
+    }
     pairedHost.value = if (state == "unpaired") null else "ai5080"
     s.hostOnline.value = state != "offline"
     s.running.value = state in setOf("connecting", "listening", "speaking", "thinking", "muted")

@@ -27,6 +27,14 @@ object TalkState {
   /** "Call ended · 2:31", shown briefly after hanging up. */
   val lastCall = MutableStateFlow("")
 
+  // Settings
+  val voices = MutableStateFlow(Voices.builtIn)
+  val selectedVoice = MutableStateFlow(Voices.DEFAULT)
+  /** The voice whose sample is playing (or loading), if any. */
+  val previewing = MutableStateFlow<String?>(null)
+  val previewLoading = MutableStateFlow(false)
+  val previewError = MutableStateFlow("")
+
   fun addLine(role: String, text: String) {
     val clean = text.trim()
     if (clean.isEmpty()) return

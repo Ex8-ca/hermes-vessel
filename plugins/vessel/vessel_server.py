@@ -169,7 +169,31 @@ def turn_detection() -> dict:
     }
 
 
-def build_session() -> dict:
+# The voices OpenAI offers for gpt-realtime. The phone picks one per call (a voice is fixed
+# once a session has spoken). Notes are short; the app plays a sample of each.
+VOICES = [
+    {"id": "marin", "name": "Marin", "note": "Warm and natural", "tone": "female"},
+    {"id": "shimmer", "name": "Shimmer", "note": "Bright and clear", "tone": "female"},
+    {"id": "coral", "name": "Coral", "note": "Friendly and upbeat", "tone": "female"},
+    {"id": "sage", "name": "Sage", "note": "Calm and unhurried", "tone": "female"},
+    {"id": "alloy", "name": "Alloy", "note": "Even and balanced", "tone": "neutral"},
+    {"id": "cedar", "name": "Cedar", "note": "Warm and natural", "tone": "male"},
+    {"id": "ash", "name": "Ash", "note": "Soft and conversational", "tone": "male"},
+    {"id": "ballad", "name": "Ballad", "note": "Expressive", "tone": "male"},
+    {"id": "echo", "name": "Echo", "note": "Steady", "tone": "male"},
+    {"id": "verse", "name": "Verse", "note": "Lively", "tone": "male"},
+]
+VOICE_IDS = {v["id"] for v in VOICES}
+SAMPLE_LINE = "Hi, it's Hermes. This is how I'd sound when we talk."
+
+
+def normalize_voice(value: Optional[str]) -> Optional[str]:
+    """A known voice id, or None (use the configured default)."""
+    v = (value or "").strip().lower()
+    return v if v in VOICE_IDS else None
+
+
+def build_session(voice: Optional[str] = None) -> dict:
     return {
         "type": "realtime",
         "model": MODEL,
@@ -181,7 +205,7 @@ def build_session() -> dict:
                 "turn_detection": turn_detection(),
                 "transcription": {"model": "gpt-4o-mini-transcribe"},
             },
-            "output": {"format": {"type": "audio/pcm", "rate": SAMPLE_RATE}, "voice": VOICE},
+            "output": {"format": {"type": "audio/pcm", "rate": SAMPLE_RATE}, "voice": voice or VOICE},
         },
         "tools": [ASK_HERMES_TOOL],
         "tool_choice": "auto",
@@ -195,7 +219,7 @@ class VesselError(RuntimeError):
     pass
 
 
-def mint_client_secret() -> str:
+def mint_client_secret(voice: Optional[str] = None) -> str:
     """Mint a short-lived OpenAI Realtime secret with the user's Codex sign-in.
 
     Called from this plugin's own frame (credentialed_provider_request identifies
@@ -207,7 +231,7 @@ def mint_client_secret() -> str:
 
     try:
         response = credentialed_provider_request(
-            "openai-codex", "POST", CLIENT_SECRETS_URL, json={"session": build_session()}, timeout=30.0
+            "openai-codex", "POST", CLIENT_SECRETS_URL, json={"session": build_session(voice)}, timeout=30.0
         )
     except ProviderNotSignedIn as exc:
         raise VesselError(str(exc)) from None
@@ -330,8 +354,9 @@ _TURN_EVENTS = {
 
 
 class PhoneSession:
-    def __init__(self, ws) -> None:
+    def __init__(self, ws, voice: Optional[str] = None) -> None:
         self.ws = ws
+        self.voice = voice or VOICE
         self.oa = None
         self.bridge = HermesBridge()
         self.tasks: set[asyncio.Task] = set()
@@ -358,7 +383,7 @@ class PhoneSession:
 
         await self.state("connecting")
         try:
-            secret = await asyncio.to_thread(mint_client_secret)
+            secret = await asyncio.to_thread(mint_client_secret, self.voice)
         except Exception as exc:  # noqa: BLE001 - surfaced to the phone
             log.warning("mint failed: %s", exc)
             await self.send_json({"type": "error", "message": f"Couldn't start the voice session: {exc}"})
@@ -373,7 +398,7 @@ class PhoneSession:
                 ) as oa:
                     self.oa = oa
                     await self.state("listening")
-                    log.info("phone call connected to OpenAI Realtime (%s, %s)", MODEL, VOICE)
+                    log.info("phone call connected to OpenAI Realtime (%s, %s)", MODEL, self.voice)
                     up = asyncio.create_task(self.phone_to_openai())
                     down = asyncio.create_task(self.openai_to_phone())
                     _done, pending = await asyncio.wait({up, down}, return_when=asyncio.FIRST_COMPLETED)
@@ -579,6 +604,55 @@ if (!/Android/i.test(navigator.userAgent)) document.getElementById('desktop').st
 </script></body></html>"""
 
 
+async def speak(prompt: str, voice: Optional[str] = None) -> tuple:
+    """One short realtime session: send a text turn, return (pcm16 24 kHz, transcript, mint_s, first_audio_s)."""
+    import aiohttp
+
+    started = time.monotonic()
+    secret = await asyncio.to_thread(mint_client_secret, voice)
+    minted = time.monotonic() - started
+    pcm = bytearray()
+    transcript = ""
+    first_audio = None
+    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=None, sock_connect=20)) as http:
+        async with http.ws_connect(
+            f"{REALTIME_WS_URL}?model={MODEL}", headers={"Authorization": f"Bearer {secret}"},
+            heartbeat=20.0, max_msg_size=0,
+        ) as oa:
+            await oa.send_str(json.dumps({
+                "type": "conversation.item.create",
+                "item": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": prompt}]},
+            }))
+            asked = time.monotonic()
+            await oa.send_str(json.dumps({"type": "response.create"}))
+            async for msg in oa:
+                event = json.loads(msg.data)
+                kind = event.get("type", "")
+                if kind in ("response.output_audio.delta", "response.audio.delta"):
+                    if first_audio is None:
+                        first_audio = time.monotonic() - asked
+                    pcm += base64.b64decode(event.get("delta", ""))
+                elif kind in ("response.output_audio_transcript.done", "response.audio_transcript.done"):
+                    transcript = event.get("transcript", "")
+                elif kind == "error":
+                    raise VesselError(str(event.get("error")))
+                elif kind == "response.done":
+                    break
+    return bytes(pcm), transcript, minted, first_audio
+
+
+def say_exactly(line: str) -> str:
+    return f"Say exactly this, warmly and naturally, and nothing else: {line}"
+
+
+def write_wav(path: Path, pcm: bytes) -> None:
+    with wave.open(str(path), "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(SAMPLE_RATE)
+        wav.writeframes(pcm)
+
+
 def make_app():
     from aiohttp import web
 
@@ -605,13 +679,44 @@ def make_app():
             },
         )
 
-    async def ws_handler(request):
-        if not secrets.compare_digest(request.query.get("t", ""), token):
+    def authorized(request) -> bool:
+        return secrets.compare_digest(request.query.get("t", ""), token)
+
+    async def voices(request):
+        if not authorized(request):
             return web.Response(status=403)
+        return web.json_response({"default": VOICE, "voices": VOICES})
+
+    sample_locks: dict = {}
+
+    async def voice_sample(request):
+        """A short sample of one voice, recorded once through the realtime API and cached."""
+        if not authorized(request):
+            return web.Response(status=403)
+        voice = normalize_voice(request.match_info.get("voice"))
+        if voice is None:
+            return web.Response(status=404, text="Unknown voice")
+        path = _data_dir() / "voices" / f"{voice}.wav"
+        async with sample_locks.setdefault(voice, asyncio.Lock()):
+            if not path.is_file():
+                try:
+                    pcm, _transcript, _minted, _first = await asyncio.wait_for(speak(say_exactly(SAMPLE_LINE), voice), 60)
+                except Exception as exc:  # noqa: BLE001 - reported to the phone as a 502
+                    log.warning("voice sample %s failed: %s", voice, exc)
+                    return web.Response(status=502, text="Couldn't record a sample right now.")
+                path.parent.mkdir(parents=True, exist_ok=True)
+                write_wav(path, pcm)
+                log.info("recorded voice sample %s", voice)
+        return web.FileResponse(path, headers={"Content-Type": "audio/wav", "Cache-Control": "private, max-age=86400"})
+
+    async def ws_handler(request):
+        if not authorized(request):
+            return web.Response(status=403)
+        voice = normalize_voice(request.query.get("voice"))
         ws = web.WebSocketResponse(heartbeat=20.0, max_msg_size=8 * 1024 * 1024)
         await ws.prepare(request)
         log.info("phone connected from %s", request.headers.get("X-Forwarded-For") or request.remote)
-        await PhoneSession(ws).run()
+        await PhoneSession(ws, voice).run()
         await ws.close()
         return ws
 
@@ -621,6 +726,8 @@ def make_app():
         app.router.add_get(prefix + "/", index)
         app.router.add_get(prefix + "/app.apk", apk)
         app.router.add_get(prefix + "/ws", ws_handler)
+        app.router.add_get(prefix + "/voices", voices)
+        app.router.add_get(prefix + "/voices/{voice}/sample", voice_sample)
     return app
 
 
@@ -682,63 +789,24 @@ def cli_pair() -> int:
 
 def cli_selftest(voice: Optional[str] = None, say: Optional[str] = None, out: Optional[str] = None) -> int:
     """Mint a session, ask for one spoken sentence, save it as a WAV. No phone needed."""
-    import aiohttp
-
-    global VOICE
-    if voice:
-        VOICE = voice.strip().lower()
-    prompt = (
-        f"Say exactly this, warmly and naturally, and nothing else: {say}"
-        if say
-        else "This is a connection test. Greet me in one short sentence."
-    )
+    chosen = normalize_voice(voice) if voice else None
+    if voice and chosen is None:
+        print(f"Unknown voice {voice!r}. Voices: {', '.join(v['id'] for v in VOICES)}")
+        return 2
+    prompt = say_exactly(say) if say else "This is a connection test. Greet me in one short sentence."
 
     async def main() -> int:
-        started = time.monotonic()
-        secret = await asyncio.to_thread(mint_client_secret)
-        print(f"mint: ok ({time.monotonic() - started:.1f}s)")
-        pcm = bytearray()
-        transcript = ""
-        first_audio = None
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=None, sock_connect=20)) as http:
-            async with http.ws_connect(
-                f"{REALTIME_WS_URL}?model={MODEL}", headers={"Authorization": f"Bearer {secret}"},
-                heartbeat=20.0, max_msg_size=0,
-            ) as oa:
-                print(f"socket: connected ({time.monotonic() - started:.1f}s)")
-                await oa.send_str(json.dumps({
-                    "type": "conversation.item.create",
-                    "item": {"type": "message", "role": "user", "content": [
-                        {"type": "input_text", "text": prompt}]},
-                }))
-                asked = time.monotonic()
-                await oa.send_str(json.dumps({"type": "response.create"}))
-                async for msg in oa:
-                    event = json.loads(msg.data)
-                    kind = event.get("type", "")
-                    if kind in ("response.output_audio.delta", "response.audio.delta"):
-                        if first_audio is None:
-                            first_audio = time.monotonic() - asked
-                        pcm += base64.b64decode(event.get("delta", ""))
-                    elif kind in ("response.output_audio_transcript.done", "response.audio_transcript.done"):
-                        transcript = event.get("transcript", "")
-                    elif kind == "error":
-                        print("error:", event.get("error"))
-                        return 1
-                    elif kind == "response.done":
-                        break
+        pcm, transcript, minted, first_audio = await asyncio.wait_for(speak(prompt, chosen), 90)
+        print(f"mint: ok ({minted:.1f}s)")
         target = Path(out) if out else _data_dir() / "selftest.wav"
-        with wave.open(str(target), "wb") as wav:
-            wav.setnchannels(1)
-            wav.setsampwidth(2)
-            wav.setframerate(SAMPLE_RATE)
-            wav.writeframes(bytes(pcm))
+        write_wav(target, pcm)
         print(f"reply: {transcript!r}")
-        print(f"voice {VOICE}: first audio after {first_audio or 0:.2f}s; {len(pcm) / (2 * SAMPLE_RATE):.1f}s of speech -> {target}")
+        print(f"voice {chosen or VOICE}: first audio after {first_audio or 0:.2f}s; "
+              f"{len(pcm) / (2 * SAMPLE_RATE):.1f}s of speech -> {target}")
         return 0
 
     try:
         return asyncio.run(main())
-    except VesselError as exc:
-        print(f"selftest failed: {exc}")
+    except (VesselError, asyncio.TimeoutError) as exc:
+        print(f"selftest failed: {exc or type(exc).__name__}")
         return 1

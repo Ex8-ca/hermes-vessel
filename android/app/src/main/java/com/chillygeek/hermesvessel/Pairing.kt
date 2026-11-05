@@ -36,13 +36,19 @@ object Pairing {
     }
   }
 
-  /** wss://host/vessel/ws -> https://host/vessel/health */
-  fun healthUrl(wsUrl: String): String? {
+  /** wss://host/vessel/ws -> https://host/vessel */
+  private fun httpBase(wsUrl: String): String? {
     if (!wsUrl.endsWith("/ws")) return null
-    return wsUrl.removeSuffix("/ws")
-      .replaceFirst("wss://", "https://")
-      .replaceFirst("ws://", "http://") + "/health"
+    return wsUrl.removeSuffix("/ws").replaceFirst("wss://", "https://").replaceFirst("ws://", "http://")
   }
+
+  fun healthUrl(wsUrl: String): String? = httpBase(wsUrl)?.let { "$it/health" }
+
+  fun voicesUrl(wsUrl: String, token: String): String? =
+    httpBase(wsUrl)?.let { "$it/voices?t=" + Uri.encode(token) }
+
+  fun sampleUrl(wsUrl: String, token: String, voice: String): String? =
+    httpBase(wsUrl)?.let { "$it/voices/" + Uri.encode(voice) + "/sample?t=" + Uri.encode(token) }
 
   /** ai5080.tailnet.ts.net -> ai5080 */
   fun hostLabel(wsUrl: String): String =

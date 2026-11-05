@@ -180,7 +180,9 @@ class TalkService : Service() {
       fail("This phone isn't paired yet.")
       return
     }
-    val full = url + (if (url.contains("?")) "&" else "?") + "t=" + URLEncoder.encode(token, "UTF-8")
+    val voice = Prefs.voice(this)
+    val full = url + (if (url.contains("?")) "&" else "?") + "t=" + URLEncoder.encode(token, "UTF-8") +
+      (if (voice.isNotBlank()) "&voice=" + URLEncoder.encode(voice, "UTF-8") else "")
     socket = client.newWebSocket(
       Request.Builder().url(full).build(),
       object : WebSocketListener() {
