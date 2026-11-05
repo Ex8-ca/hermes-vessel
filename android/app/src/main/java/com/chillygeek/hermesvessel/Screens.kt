@@ -67,6 +67,10 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -317,9 +321,19 @@ private fun subtitle(state: String, online: Boolean?, detail: String, route: Str
 @Composable
 private fun Header(host: String?, online: Boolean?, onSettings: () -> Unit) {
   Row(Modifier.fillMaxWidth().padding(top = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-    Text("Hermes", style = Type.wordmark)
-    Spacer(Modifier.weight(1f))
+    // "Hermes" is who you talk to; "Vessel" (lighter) is the app that gives it a voice.
+    Text(
+      buildAnnotatedString {
+        append("Hermes")
+        withStyle(SpanStyle(fontWeight = FontWeight(300), color = Ivory.copy(alpha = 0.62f))) { append(" Vessel") }
+      },
+      style = Type.wordmark,
+      maxLines = 1,
+      overflow = TextOverflow.Ellipsis,
+      modifier = Modifier.weight(1f).semantics { contentDescription = "Hermes Vessel" },
+    )
     if (host != null) {
+      Spacer(Modifier.width(12.dp))
       HostChip(host, online, onSettings)
       Spacer(Modifier.width(8.dp))
       Box(
@@ -359,7 +373,13 @@ private fun HostChip(host: String, online: Boolean?, onClick: () -> Unit) {
   ) {
     Box(Modifier.size(8.dp).clip(CircleShape).background(dot))
     Spacer(Modifier.width(8.dp))
-    Text(host, style = Type.label.copy(color = Ivory.copy(alpha = 0.85f)))
+    Text(
+      host,
+      style = Type.label.copy(color = Ivory.copy(alpha = 0.85f)),
+      maxLines = 1,
+      overflow = TextOverflow.Ellipsis,
+      modifier = Modifier.widthIn(max = 132.dp),
+    )
   }
 }
 
