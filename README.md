@@ -57,13 +57,15 @@ hermes vessel pair          # prints a QR code and the pairing link
 
 Scan the QR code with the phone's camera (or open the link on the phone): download the app, install it, tap **Pair this phone**, then tap the light.
 
+**More than one Hermes:** pair each one the same way (its own `hermes vessel pair` link or QR code), or tap the gear → **Add a gateway** and paste a link. Settings lists every gateway by its full address (`ai5080.tailnet.ts.net/vessel`) with whether it's online, and calls go to the checked one: tap another to switch, or × to remove one. Pairing a gateway again replaces its token instead of adding a duplicate, and one that stops accepting this phone (its token was rotated) says so.
+
 **Choosing a voice:** in the app, tap the gear (or the host chip) → **Voice**. Each of the ten voices has a play button for a short sample, and a tap picks it for your next call. The choice lives on the phone, so two phones can use different voices.
 
 Settings (environment): `VESSEL_MODEL` (default `gpt-realtime-2.1`), `VESSEL_VOICE` (the default for phones that haven't picked one: `marin`; also `shimmer`, `coral`, `sage`, `alloy`, `cedar`, `ash`, `ballad`, `echo`, `verse`), `VESSEL_TURN_DETECTION` (`server_vad`, or `semantic_vad` if you pause mid-thought), `VESSEL_SILENCE_MS` (`550`), `VESSEL_API_SERVER_URL` (`http://127.0.0.1:6789`).
 
 ## The Android app
 
-One light, one tap. The light breathes while Hermes is idle, turns jade and swells with your voice while it listens, gathers orbiting sparks while Hermes works on something (with a timer, so silence never feels dead), and glows gold as it speaks. Hermes's words appear as live captions in its own typeface; tap the light to interrupt. Calls work like phone calls (Mute, End, a notification with End call), keep running with the screen off, and use a connected headset automatically. A chip shows whether your Hermes is reachable before you tap, and pairing is one tap from a link or QR code (or paste the link). Settings has the voice picker (with samples), the paired Hermes and Unpair.
+One light, one tap. The light breathes while Hermes is idle, turns jade and swells with your voice while it listens, gathers orbiting sparks while Hermes works on something (with a timer, so silence never feels dead), and glows gold as it speaks. Hermes's words appear as live captions in its own typeface; tap the light to interrupt. Calls work like phone calls (Mute, End, a notification with End call), keep running with the screen off, and use a connected headset automatically. A chip shows whether your Hermes is reachable before you tap, and pairing is one tap from a link or QR code (or paste the link). Settings has your Hermes gateways (switch, add, remove) and the voice picker (with samples).
 
 Source in [`android/`](android/) (Kotlin, Jetpack Compose, OkHttp). The APK is built by this repository's GitHub Actions ([`.github/workflows/android.yml`](.github/workflows/android.yml)); tagged releases attach the APK with a GitHub build attestation. No binaries are committed — build locally with Gradle 8.14 (`gradle :app:assembleDebug` in `android/`, JDK 17). Tagging `v*` builds the signed release; the key lives only in the repository's Actions secrets.
 

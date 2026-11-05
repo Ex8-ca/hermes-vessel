@@ -56,6 +56,9 @@ import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -63,20 +66,20 @@ import androidx.compose.ui.unit.sp
 import kotlin.math.roundToInt
 
 /**
- * Settings: pick Hermes's voice (with samples), see the paired Hermes, unpair.
+ * Settings: the paired Hermes gateways (pick one, add, remove) and Hermes's voice (with samples).
  * Drawn in the app's own window (not a dialog) as a bottom sheet: tap the scrim,
  * swipe the handle down, or go back to close.
  */
 @Composable
 fun SettingsSheet(
   visible: Boolean,
-  host: String,
-  online: Boolean?,
   running: Boolean,
   appVersion: String,
+  onSelectGateway: (String) -> Unit,
+  onRemoveGateway: (String) -> Unit,
+  onAddGateway: (String) -> Boolean,
   onSelectVoice: (String) -> Unit,
   onPreviewVoice: (String) -> Unit,
-  onUnpair: () -> Unit,
   onDismiss: () -> Unit,
 ) {
   BackHandler(enabled = visible, onBack = onDismiss)
@@ -95,20 +98,20 @@ fun SettingsSheet(
     modifier = Modifier.fillMaxSize(),
   ) {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) {
-      SheetBody(host, online, running, appVersion, onSelectVoice, onPreviewVoice, onUnpair, onDismiss)
+      SheetBody(running, appVersion, onSelectGateway, onRemoveGateway, onAddGateway, onSelectVoice, onPreviewVoice, onDismiss)
     }
   }
 }
 
 @Composable
 private fun SheetBody(
-  host: String,
-  online: Boolean?,
   running: Boolean,
   appVersion: String,
+  onSelectGateway: (String) -> Unit,
+  onRemoveGateway: (String) -> Unit,
+  onAddGateway: (String) -> Boolean,
   onSelectVoice: (String) -> Unit,
   onPreviewVoice: (String) -> Unit,
-  onUnpair: () -> Unit,
   onDismiss: () -> Unit,
 ) {
   val voices by TalkState.voices.collectAsState()
@@ -116,7 +119,11 @@ private fun SheetBody(
   val previewing by TalkState.previewing.collectAsState()
   val loading by TalkState.previewLoading.collectAsState()
   val previewError by TalkState.previewError.collectAsState()
-  var askUnpair by remember { mutableStateOf(false) }
+  val gateways by TalkState.gateways.collectAsState()
+  val activeUrl by TalkState.activeGateway.collectAsState()
+  val statuses by TalkState.gatewayStatus.collectAsState()
+  var adding by remember { mutableStateOf(false) }
+  var removing by remember { mutableStateOf<Gateway?>(null) }
   var drag by remember { mutableStateOf(0f) }
   val dismissAt = with(LocalDensity.current) { 120.dp.toPx() }
   val settle by animateFloatAsState(drag, label = "sheetDrag")
@@ -158,6 +165,54 @@ private fun SheetBody(
         .navigationBarsPadding()
         .padding(horizontal = 24.dp),
     ) {
+      Text("HERMES GATEWAYS", style = Type.overline)
+      Spacer(Modifier.height(6.dp))
+      Text(
+        when {
+          running -> "End the call to switch gateways."
+          gateways.size > 1 -> "Calls go to the checked gateway. Tap another to switch."
+          else -> "Pair another Hermes to switch between them here."
+        },
+        style = Type.label,
+      )
+      Spacer(Modifier.height(14.dp))
+      Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        for (gateway in gateways) {
+          GatewayRow(
+            gateway = gateway,
+            isActive = gateway.url == (activeUrl ?: gateways.firstOrNull()?.url),
+            status = statuses[gateway.url] ?: GatewayStatus.CHECKING,
+            enabled = !running,
+            onSelect = { onSelectGateway(gateway.url) },
+            onRemove = { removing = gateway },
+          )
+        }
+      }
+      Spacer(Modifier.height(6.dp))
+      if (adding) {
+        Spacer(Modifier.height(8.dp))
+        Text(
+          buildAnnotatedString {
+            append("On the other computer, run ")
+            withStyle(Type.code.toSpanStyle()) { append("hermes vessel pair") }
+            append(" and scan its QR code with your camera, or paste its link here.")
+          },
+          style = Type.label,
+        )
+        Spacer(Modifier.height(12.dp))
+        PairLinkField(onPairLink = onAddGateway, buttonLabel = "Add gateway", onPaired = { adding = false })
+        TextButton(onClick = { adding = false }, contentPadding = PaddingValues(vertical = 10.dp)) {
+          Text("Cancel", color = Muted)
+        }
+      } else {
+        TextButton(onClick = { adding = true }, contentPadding = PaddingValues(vertical = 10.dp)) {
+          Icon(painterResource(R.drawable.ic_add), contentDescription = null, tint = GoldLight, modifier = Modifier.size(18.dp))
+          Spacer(Modifier.width(8.dp))
+          Text("Add a gateway", color = GoldLight)
+        }
+      }
+
+      Spacer(Modifier.height(26.dp))
       Text("VOICE", style = Type.overline)
       Spacer(Modifier.height(6.dp))
       Text(
@@ -184,57 +239,102 @@ private fun SheetBody(
       }
 
       Spacer(Modifier.height(30.dp))
-      Text("YOUR HERMES", style = Type.overline)
-      Spacer(Modifier.height(10.dp))
-      Row(verticalAlignment = Alignment.CenterVertically) {
-        Box(
-          Modifier.size(8.dp).clip(CircleShape).background(
-            when (online) {
-              true -> Jade
-              false -> Coral
-              null -> Muted
-            },
-          ),
-        )
-        Spacer(Modifier.width(10.dp))
-        Column {
-          Text(host, style = Type.body.copy(color = Ivory))
-          Text(
-            when (online) {
-              true -> "Online"
-              false -> "Not reachable right now"
-              null -> "Checking…"
-            },
-            style = Type.label,
-          )
-        }
-      }
-      Spacer(Modifier.height(8.dp))
-      // Zero side padding so the label lines up with the text above it.
-      TextButton(onClick = { askUnpair = true }, contentPadding = PaddingValues(vertical = 10.dp)) {
-        Text("Unpair this phone", color = Coral)
-      }
-
       Spacer(Modifier.height(18.dp))
       Text("Hermes Vessel $appVersion", style = Type.label.copy(color = Muted.copy(alpha = 0.7f)))
       Spacer(Modifier.height(28.dp))
     }
   }
 
-  if (askUnpair) {
+  removing?.let { gateway ->
+    val isActive = gateway.url == (activeUrl ?: gateways.firstOrNull()?.url)
+    val onlyOne = gateways.size <= 1
     AlertDialog(
-      onDismissRequest = { askUnpair = false },
+      onDismissRequest = { removing = null },
       containerColor = Panel,
-      title = { Text("Unpair from $host?", style = Type.headline.copy(fontSize = 24.sp)) },
-      text = { Text("This phone will forget your Hermes. You can pair again from the link or QR code.", style = Type.body) },
+      title = { Text("Remove ${gateway.name}?", style = Type.headline.copy(fontSize = 24.sp)) },
+      text = {
+        Text(
+          buildString {
+            append("This phone will forget ${gateway.path}. You can pair it again from its link or QR code.")
+            if (running && isActive) append(" This ends the current call.")
+            if (onlyOne) append(" It's your only gateway, so the app will go back to pairing.")
+          },
+          style = Type.body,
+        )
+      },
       confirmButton = {
         TextButton(onClick = {
-          askUnpair = false
-          onUnpair()
-        }) { Text("Unpair", color = Coral) }
+          removing = null
+          onRemoveGateway(gateway.url)
+        }) { Text("Remove", color = Coral) }
       },
-      dismissButton = { TextButton(onClick = { askUnpair = false }) { Text("Keep", color = Ivory) } },
+      dismissButton = { TextButton(onClick = { removing = null }) { Text("Keep", color = Ivory) } },
     )
+  }
+}
+
+@Composable
+private fun GatewayRow(
+  gateway: Gateway,
+  isActive: Boolean,
+  status: GatewayStatus,
+  enabled: Boolean,
+  onSelect: () -> Unit,
+  onRemove: () -> Unit,
+) {
+  val shape = RoundedCornerShape(18.dp)
+  val border by animateColorAsState(if (isActive) Gold.copy(alpha = 0.55f) else Color.White.copy(alpha = 0.07f), label = "gatewayBorder")
+  val fill by animateColorAsState(if (isActive) Gold.copy(alpha = 0.10f) else Color.White.copy(alpha = 0.02f), label = "gatewayFill")
+  val dot = when (status) {
+    GatewayStatus.ONLINE -> Jade
+    GatewayStatus.OFFLINE, GatewayStatus.REJECTED -> Coral
+    GatewayStatus.CHECKING -> Muted
+  }
+  val statusText = when (status) {
+    GatewayStatus.ONLINE -> "Online"
+    GatewayStatus.OFFLINE -> "Not reachable right now"
+    GatewayStatus.REJECTED -> "Doesn't accept this phone anymore. Pair it again."
+    GatewayStatus.CHECKING -> "Checking…"
+  }
+  Row(
+    Modifier
+      .fillMaxWidth()
+      .clip(shape)
+      .background(fill)
+      .border(1.dp, border, shape)
+      .clickable(enabled = enabled && !isActive, role = Role.RadioButton, onClickLabel = "Use ${gateway.name}", onClick = onSelect)
+      .semantics { selected = isActive }
+      .padding(start = 16.dp, end = 4.dp, top = 12.dp, bottom = 12.dp),
+    verticalAlignment = Alignment.CenterVertically,
+  ) {
+    Box(Modifier.size(8.dp).clip(CircleShape).background(dot))
+    Spacer(Modifier.width(12.dp))
+    Column(Modifier.weight(1f)) {
+      Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(
+          gateway.name,
+          style = Type.hermes.copy(fontSize = 20.sp, fontWeight = FontWeight(400)),
+          maxLines = 1,
+          overflow = TextOverflow.Ellipsis,
+          modifier = Modifier.weight(1f, fill = false),
+        )
+        if (isActive) {
+          Spacer(Modifier.width(8.dp))
+          Icon(painterResource(R.drawable.ic_check), contentDescription = "Active", tint = GoldLight, modifier = Modifier.size(18.dp))
+        }
+      }
+      Text(gateway.path, style = Type.label.copy(color = Ivory.copy(alpha = 0.78f)), maxLines = 2, overflow = TextOverflow.Ellipsis)
+      Text(statusText, style = Type.label.copy(color = if (dot == Coral) Coral else Muted))
+    }
+    Box(
+      Modifier
+        .size(44.dp)
+        .clip(CircleShape)
+        .clickable(role = Role.Button, onClickLabel = "Remove ${gateway.name}", onClick = onRemove),
+      contentAlignment = Alignment.Center,
+    ) {
+      Icon(painterResource(R.drawable.ic_close), contentDescription = "Remove", tint = Muted, modifier = Modifier.size(18.dp))
+    }
   }
 }
 

@@ -3,6 +3,19 @@ package com.chillygeek.hermesvessel
 import kotlinx.coroutines.flow.MutableStateFlow
 
 /** Shared state between the talk service and the screen. */
+/** What the last check of a gateway found. */
+enum class GatewayStatus {
+  CHECKING, ONLINE, OFFLINE, REJECTED;
+
+  /** For the header chip: reachable and accepting this phone, not, or unknown yet. */
+  val online: Boolean?
+    get() = when (this) {
+      ONLINE -> true
+      OFFLINE, REJECTED -> false
+      CHECKING -> null
+    }
+}
+
 object TalkState {
   /** Server-reported call state: idle | connecting | listening | thinking | speaking | error. */
   val status = MutableStateFlow("idle")
@@ -24,6 +37,11 @@ object TalkState {
   val lines = MutableStateFlow<List<Pair<String, String>>>(emptyList())
   /** null = not checked yet; true/false = the paired Hermes answered /health. */
   val hostOnline = MutableStateFlow<Boolean?>(null)
+
+  // Gateways (Settings): every paired Hermes, which one calls go to, and whether each answers.
+  val gateways = MutableStateFlow<List<Gateway>>(emptyList())
+  val activeGateway = MutableStateFlow<String?>(null)
+  val gatewayStatus = MutableStateFlow<Map<String, GatewayStatus>>(emptyMap())
   /** "Call ended · 2:31", shown briefly after hanging up. */
   val lastCall = MutableStateFlow("")
 

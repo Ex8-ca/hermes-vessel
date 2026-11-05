@@ -92,7 +92,8 @@ class MainActivity : ComponentActivity() {
             TalkService.interrupt()
           },
           onPairLink = ::pairFrom,
-          onUnpair = ::unpair,
+          onSelectGateway = ::selectGateway,
+          onRemoveGateway = ::removeGateway,
           onOpenSettings = ::openSettings,
           onCloseSettings = ::closeSettings,
           onSelectVoice = ::selectVoice,
@@ -135,9 +136,15 @@ class MainActivity : ComponentActivity() {
     window.decorView.performHapticFeedback(constant)
   }
 
+  /** Publish the paired gateways and the active one to the UI. */
   private fun refreshPairing() {
-    val url = Prefs.url(this)
-    pairedHost.value = if (url.isNotBlank() && Prefs.token(this).isNotBlank()) Pairing.hostLabel(url) else null
+    val list = Prefs.gateways(this)
+    val active = Prefs.active(this)
+    TalkState.gateways.value = list
+    TalkState.activeGateway.value = active?.url
+    TalkState.gatewayStatus.value = TalkState.gatewayStatus.value.filterKeys { url -> list.any { it.url == url } }
+    pairedHost.value = active?.name
+    TalkState.hostOnline.value = active?.let { TalkState.gatewayStatus.value[it.url]?.online }
   }
 
   private fun handleIntent(intent: Intent?) {
@@ -163,29 +170,58 @@ class MainActivity : ComponentActivity() {
     }
   }
 
-  /** Save a pairing link (deep link or pasted page address). */
+  /**
+   * Pair a gateway from a link (deep link or pasted page address). A new gateway becomes the
+   * active one, except during a call, which stays on its gateway.
+   */
   private fun pairFrom(text: String): Boolean {
     val link = Pairing.parse(text) ?: return false
-    Prefs.save(this, link.wsUrl, link.token)
-    TalkState.status.value = "idle"
-    TalkState.detail.value = ""
-    TalkState.hostOnline.value = null
+    val inCall = TalkState.running.value
+    Prefs.save(this, link.wsUrl, link.token, makeActive = !inCall)
+    if (!inCall) {
+      TalkState.status.value = "idle"
+      TalkState.detail.value = ""
+    }
+    TalkState.gatewayStatus.value = TalkState.gatewayStatus.value - link.wsUrl
     refreshPairing()
     haptic(if (Build.VERSION.SDK_INT >= 30) HapticFeedbackConstants.CONFIRM else HapticFeedbackConstants.VIRTUAL_KEY)
     checkHealth()
+    if (showSettings.value) loadVoices()
     return true
   }
 
-  private fun unpair() {
-    if (TalkState.running.value) TalkService.stop(this)
-    closeSettings()
-    Prefs.clear(this)
-    TalkState.hostOnline.value = null
+  /** Make another paired gateway the one calls go to. */
+  private fun selectGateway(url: String) {
+    if (TalkState.running.value) return
+    Prefs.setActive(this, url)
+    TalkState.status.value = "idle"
+    TalkState.detail.value = ""
     refreshPairing()
+    haptic(HapticFeedbackConstants.VIRTUAL_KEY)
+    checkHealth()
+    loadVoices()
+  }
+
+  /** Forget one gateway (ending the call if it was on it). With none left, the app goes back to pairing. */
+  private fun removeGateway(url: String) {
+    val wasActive = Prefs.active(this)?.url == url
+    if (wasActive && TalkState.running.value) TalkService.stop(this)
+    Prefs.remove(this, url)
+    TalkState.gatewayStatus.value = TalkState.gatewayStatus.value - url
+    if (Prefs.gateways(this).isEmpty()) closeSettings()
+    refreshPairing()
+    haptic(HapticFeedbackConstants.VIRTUAL_KEY)
+    if (wasActive && Prefs.active(this) != null) {
+      TalkState.status.value = "idle"
+      TalkState.detail.value = ""
+      checkHealth()
+      loadVoices()
+    }
   }
 
   private fun openSettings() {
     TalkState.previewError.value = ""
+    refreshPairing()
     showSettings.value = true
     loadVoices()
     if (!TalkState.running.value) checkHealth()
@@ -296,21 +332,44 @@ class MainActivity : ComponentActivity() {
     TalkState.previewLoading.value = false
   }
 
-  /** Ask the paired Hermes whether it's reachable, so the chip is honest before you tap. */
+  /**
+   * Ask every paired gateway whether it answers and still accepts this phone's pairing,
+   * so the chip and Settings are honest before you tap.
+   */
   private fun checkHealth() {
-    val url = Pairing.healthUrl(Prefs.url(this)) ?: return
-    lifecycleScope.launch {
-      val ok = withContext(Dispatchers.IO) {
-        try {
-          http.newCall(Request.Builder().url(url).build()).execute().use { response ->
-            response.isSuccessful && JSONObject(response.body?.string() ?: "{}").optBoolean("ok")
-          }
-        } catch (e: Exception) {
-          false
+    for (gateway in Prefs.gateways(this)) {
+      val voices = Pairing.voicesUrl(gateway.url, gateway.token) ?: continue
+      val health = Pairing.healthUrl(gateway.url)
+      if (TalkState.gatewayStatus.value[gateway.url] == null) setStatus(gateway.url, GatewayStatus.CHECKING)
+      lifecycleScope.launch {
+        val status = withContext(Dispatchers.IO) { probe(voices, health) }
+        setStatus(gateway.url, status)
+      }
+    }
+  }
+
+  /** The voice list needs the pairing token: 200 = fine, 403 = this phone's pairing was replaced. */
+  private fun probe(voicesUrl: String, healthUrl: String?): GatewayStatus =
+    try {
+      http.newCall(Request.Builder().url(voicesUrl).build()).execute().use { response ->
+        when {
+          response.isSuccessful -> GatewayStatus.ONLINE
+          response.code == 403 -> GatewayStatus.REJECTED
+          // A gateway from before the voice picker has no /voices; fall back to /health.
+          response.code == 404 && healthUrl != null ->
+            http.newCall(Request.Builder().url(healthUrl).build()).execute().use { h ->
+              if (h.isSuccessful) GatewayStatus.ONLINE else GatewayStatus.OFFLINE
+            }
+          else -> GatewayStatus.OFFLINE
         }
       }
-      TalkState.hostOnline.value = ok
+    } catch (e: Exception) {
+      GatewayStatus.OFFLINE
     }
+
+  private fun setStatus(url: String, status: GatewayStatus) {
+    TalkState.gatewayStatus.value = TalkState.gatewayStatus.value + (url to status)
+    if (url == Prefs.active(this)?.url) TalkState.hostOnline.value = status.online
   }
 
   private fun onTalk() {
@@ -359,6 +418,21 @@ class MainActivity : ComponentActivity() {
     }
     pairedHost.value = if (state == "unpaired") null else "ai5080"
     s.hostOnline.value = state != "offline"
+    // Illustrative gateways (not saved): a second machine that's offline and a second Hermes on ai5080.
+    val home = "wss://ai5080.your-tailnet.ts.net/vessel/ws"
+    val laptop = "wss://laptop.your-tailnet.ts.net/vessel/ws"
+    val work = "wss://ai5080.your-tailnet.ts.net/work/ws"
+    s.gateways.value = when (state) {
+      "unpaired" -> emptyList()
+      "settings" -> listOf(Gateway(home, "demo"), Gateway(laptop, "demo"), Gateway(work, "demo"))
+      else -> listOf(Gateway(home, "demo"))
+    }
+    s.activeGateway.value = if (state == "unpaired") null else home
+    s.gatewayStatus.value = mapOf(
+      home to if (state == "offline") GatewayStatus.OFFLINE else GatewayStatus.ONLINE,
+      laptop to GatewayStatus.OFFLINE,
+      work to GatewayStatus.ONLINE,
+    )
     s.running.value = state in setOf("connecting", "listening", "speaking", "thinking", "muted")
     s.status.value = when (state) {
       "muted", "speaking" -> "listening"

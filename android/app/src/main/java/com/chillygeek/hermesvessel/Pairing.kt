@@ -50,7 +50,31 @@ object Pairing {
   fun sampleUrl(wsUrl: String, token: String, voice: String): String? =
     httpBase(wsUrl)?.let { "$it/voices/" + Uri.encode(voice) + "/sample?t=" + Uri.encode(token) }
 
-  /** ai5080.tailnet.ts.net -> ai5080 */
-  fun hostLabel(wsUrl: String): String =
-    Uri.parse(wsUrl).host?.substringBefore('.')?.takeIf { it.isNotEmpty() } ?: "Hermes"
+  /**
+   * The gateway's full address as people read it:
+   * wss://ai5080.tailnet.ts.net/vessel/ws -> ai5080.tailnet.ts.net/vessel.
+   * Unencrypted gateways keep their scheme (http://192.168.1.3:8796) so that is visible.
+   */
+  fun displayPath(wsUrl: String): String {
+    val base = wsUrl.removeSuffix("/ws").removeSuffix("/")
+    return when {
+      base.startsWith("wss://") -> base.removePrefix("wss://")
+      base.startsWith("ws://") -> "http://" + base.removePrefix("ws://")
+      else -> base
+    }
+  }
+
+  /**
+   * A short name for the header chip: the machine name (ai5080), plus the path when it isn't the
+   * default /vessel, so two gateways on one machine stay distinguishable (ai5080 · work).
+   */
+  fun shortName(wsUrl: String): String {
+    val uri = Uri.parse(wsUrl)
+    val host = uri.host?.takeIf { it.isNotEmpty() } ?: return "Hermes"
+    val isAddress = host.contains(':') || host.all { it.isDigit() || it == '.' }
+    val machine = if (isAddress) host else host.substringBefore('.')
+    val dir = (uri.path ?: "").removeSuffix("/ws").trim('/')
+    val last = dir.substringAfterLast('/')
+    return if (last.isEmpty() || last == "vessel") machine else "$machine · $last"
+  }
 }

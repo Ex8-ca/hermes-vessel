@@ -110,7 +110,8 @@ fun VesselApp(
   onMute: () -> Unit,
   onInterrupt: () -> Unit,
   onPairLink: (String) -> Boolean,
-  onUnpair: () -> Unit,
+  onSelectGateway: (String) -> Unit,
+  onRemoveGateway: (String) -> Unit,
   onOpenSettings: () -> Unit,
   onCloseSettings: () -> Unit,
   onSelectVoice: (String) -> Unit,
@@ -154,20 +155,17 @@ fun VesselApp(
       PairScreen(onPairLink)
     } else {
       CallScreen(host, state, level, running, muted, onTalk, onEnd, onMute, onInterrupt, onOpenSettings)
-      run {
-        val online by TalkState.hostOnline.collectAsState()
-        SettingsSheet(
-          visible = showSettings,
-          host = host,
-          online = online,
-          running = running,
-          appVersion = appVersion,
-          onSelectVoice = onSelectVoice,
-          onPreviewVoice = onPreviewVoice,
-          onUnpair = onUnpair,
-          onDismiss = onCloseSettings,
-        )
-      }
+      SettingsSheet(
+        visible = showSettings,
+        running = running,
+        appVersion = appVersion,
+        onSelectGateway = onSelectGateway,
+        onRemoveGateway = onRemoveGateway,
+        onAddGateway = onPairLink,
+        onSelectVoice = onSelectVoice,
+        onPreviewVoice = onPreviewVoice,
+        onDismiss = onCloseSettings,
+      )
     }
   }
 }
@@ -468,8 +466,6 @@ private fun PrimaryButton(text: String, enabled: Boolean, onClick: () -> Unit) {
 
 @Composable
 private fun PairScreen(onPairLink: (String) -> Boolean) {
-  var link by remember { mutableStateOf("") }
-  var invalid by remember { mutableStateOf(false) }
   Column(
     Modifier
       .fillMaxSize()
@@ -500,6 +496,17 @@ private fun PairScreen(onPairLink: (String) -> Boolean) {
     Spacer(Modifier.height(30.dp))
     Text("OR PASTE THE PAIRING LINK", style = Type.overline, modifier = Modifier.fillMaxWidth())
     Spacer(Modifier.height(8.dp))
+    PairLinkField(onPairLink)
+    Spacer(Modifier.height(24.dp))
+  }
+}
+
+/** Paste a pairing link: the pairing screen and Settings → Add a gateway. */
+@Composable
+fun PairLinkField(onPairLink: (String) -> Boolean, buttonLabel: String = "Pair", onPaired: () -> Unit = {}) {
+  var link by remember { mutableStateOf("") }
+  var invalid by remember { mutableStateOf(false) }
+  Column(Modifier.fillMaxWidth()) {
     OutlinedTextField(
       value = link,
       onValueChange = {
@@ -528,8 +535,15 @@ private fun PairScreen(onPairLink: (String) -> Boolean) {
       Text("That doesn't look like a Vessel pairing link.", style = Type.label.copy(color = Coral), modifier = Modifier.fillMaxWidth())
     }
     Spacer(Modifier.height(16.dp))
-    PrimaryButton("Pair", enabled = link.isNotBlank()) { invalid = !onPairLink(link) }
-    Spacer(Modifier.height(24.dp))
+    PrimaryButton(buttonLabel, enabled = link.isNotBlank()) {
+      if (onPairLink(link)) {
+        link = ""
+        invalid = false
+        onPaired()
+      } else {
+        invalid = true
+      }
+    }
   }
 }
 
