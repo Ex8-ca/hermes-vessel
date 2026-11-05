@@ -31,6 +31,11 @@ class ScreenCaptureService : Service() {
   private var requestId = ""
   private var released = false
   private var captured = false
+  /**
+   * Let the system "Start recording or casting" window dismiss before mirroring, so the one
+   * frame we grab is the screen behind the consent — not the consent prompt itself.
+   */
+  private companion object { const val SETTLE_MS = 1000L }
   override fun onBind(intent: Intent?): IBinder? = null
 
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -97,8 +102,8 @@ class ScreenCaptureService : Service() {
           display = p.createVirtualDisplay("Vessel single screenshot", width, height, metrics.densityDpi,
             DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR, r.surface, null, handler)
         } catch (_: Exception) { ScreenRequests.finish(this, error = "Android refused screen capture.") }
-      }, 700)
-      handler.postDelayed({ ScreenRequests.finish(this, error = "No screen image received.") }, 10000)
+      }, SETTLE_MS)
+      handler.postDelayed({ ScreenRequests.finish(this, error = "No screen image received.") }, SETTLE_MS + 10000)
     } catch (_: Exception) { ScreenRequests.finish(this, error = "Android refused screen capture.") }
     return START_NOT_STICKY
   }
