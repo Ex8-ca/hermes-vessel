@@ -50,6 +50,7 @@ object Prefs {
 
   /** Forget one gateway. If it was the active one, the first remaining gateway takes over. */
   fun remove(c: Context, url: String) {
+    ScreenRequests.setAllowed(c, url, false)
     val current = active(c)?.url
     val list = gateways(c).filterNot { it.url == url }
     write(c, list, if (current == url) list.firstOrNull()?.url else current)

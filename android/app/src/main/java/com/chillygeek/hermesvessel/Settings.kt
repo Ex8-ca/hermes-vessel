@@ -213,6 +213,8 @@ private fun SheetBody(
       }
 
       Spacer(Modifier.height(26.dp))
+      ScreenPermissionSettings(activeUrl)
+      Spacer(Modifier.height(26.dp))
       Text("VOICE", style = Type.overline)
       Spacer(Modifier.height(6.dp))
       Text(

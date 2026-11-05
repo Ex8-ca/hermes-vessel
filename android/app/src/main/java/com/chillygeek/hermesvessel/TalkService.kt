@@ -187,6 +187,9 @@ class TalkService : Service() {
       Request.Builder().url(full).build(),
       object : WebSocketListener() {
         override fun onOpen(webSocket: WebSocket, response: Response) {
+          android.os.Handler(mainLooper).post {
+            if (running) ScreenRequests.attach(this@TalkService, url) { webSocket.send(it.toString()); Unit }
+          }
           startAudio()
         }
 
@@ -308,6 +311,11 @@ class TalkService : Service() {
   private fun handleControl(text: String) {
     val msg = try { JSONObject(text) } catch (e: Exception) { return }
     when (msg.optString("type")) {
+      "device_request" -> if (msg.optString("capability") == "screenshot") {
+        android.os.Handler(mainLooper).post {
+          if (running) ScreenRequests.request(this, msg.optString("id"), msg.optString("reason"))
+        }
+      }
       "state" -> {
         val state = msg.optString("state")
         val previous = TalkState.status.value
@@ -360,6 +368,7 @@ class TalkService : Service() {
       callStartedAt = 0L
     }
     running = false
+    android.os.Handler(mainLooper).post { ScreenRequests.detach(this) }
     instance = null
     TalkState.running.value = false
     TalkState.playing.value = false

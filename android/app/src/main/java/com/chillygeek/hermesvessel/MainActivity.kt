@@ -74,6 +74,7 @@ class MainActivity : ComponentActivity() {
       VesselTheme {
         val host by pairedHost.collectAsState()
         val settingsOpen by showSettings.collectAsState()
+        ScreenRequestPrompt()
         VesselApp(
           host = host,
           showSettings = settingsOpen,
