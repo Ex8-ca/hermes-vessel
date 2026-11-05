@@ -6,6 +6,8 @@ Give your Hermes Agent a phone as its body. Tap one button on an Android phone a
 - **The brain** is your Hermes, with its memory, skills and tools. Anything that needs real work (files, the web, your calendar, smart home, code) is handed to Hermes mid-conversation, and the answer is spoken back.
 - **The phone** only moves audio. No keys or server addresses are baked into the app; it pairs with your Hermes from a link.
 
+![Pairing page, and the app idle, listening, working and speaking](docs/screens.png)
+
 > Status: early build for the Nous Research plugin hackathon (November 2026). Voice and hand-off to Hermes are verified end to end with a simulated phone over a tailnet; real-phone testing is under way. Camera "eyes", proactive speech and an inner life between conversations are next.
 
 ## How it works
@@ -23,7 +25,7 @@ Measured over a Tailscale tailnet: a reply starts about **1 second** after you s
 - Hermes Agent with the **API server** enabled (`API_SERVER_KEY` set) — `ask_hermes` runs real agent turns through it.
 - A ChatGPT subscription, signed in **inside Hermes**: `hermes auth add openai-codex --type oauth --no-browser` (a Codex CLI login does not count).
 - An Android phone (8.0+) and a way for it to reach the Hermes host over HTTPS. The tested setup is [Tailscale](https://tailscale.com) on both, with `tailscale serve`.
-- Python packages `aiohttp` and `httpx`, declared in [`plugins/vessel/pyproject.toml`](plugins/vessel/pyproject.toml). Hermes asks for consent and installs them when you enable the plugin. No other plugin is needed.
+- Python packages `aiohttp`, `httpx` and `qrcode`, declared in [`plugins/vessel/pyproject.toml`](plugins/vessel/pyproject.toml). Hermes asks for consent and installs them when you enable the plugin. No other plugin is needed.
 
 ## Install
 
@@ -41,14 +43,16 @@ hermes plugins enable vessel
 hermes vessel selftest      # mints a voice session, speaks one line, saves it as a WAV — no phone needed
 hermes vessel serve         # the phone link server on 127.0.0.1:8796
 tailscale serve --bg --set-path /vessel http://127.0.0.1:8796   # tailnet-only HTTPS for the phone
-hermes vessel pair          # prints the pairing link
+hermes vessel pair          # prints a QR code and the pairing link
 ```
 
-Open the pairing link **on the phone**: download the app, install it, tap **Pair this phone**, then tap **Talk**.
+Scan the QR code with the phone's camera (or open the link on the phone): download the app, install it, tap **Pair this phone**, then tap the light.
 
 Settings (environment): `VESSEL_MODEL` (default `gpt-realtime-2.1`), `VESSEL_VOICE` (`cedar`), `VESSEL_TURN_DETECTION` (`server_vad`, or `semantic_vad` if you pause mid-thought), `VESSEL_SILENCE_MS` (`550`), `VESSEL_API_SERVER_URL` (`http://127.0.0.1:6789`).
 
 ## The Android app
+
+One light, one tap. The light breathes while Hermes is idle, turns jade and swells with your voice while it listens, gathers orbiting sparks while Hermes works on something (with a timer, so silence never feels dead), and glows gold as it speaks. Hermes's words appear as live captions in its own typeface; tap the light to interrupt. Calls work like phone calls (Mute, End, a notification with End call), keep running with the screen off, and use a connected headset automatically. A chip shows whether your Hermes is reachable before you tap, and pairing is one tap from a link or QR code (or paste the link).
 
 Source in [`android/`](android/) (Kotlin, Jetpack Compose, OkHttp). The APK is built by this repository's GitHub Actions ([`.github/workflows/android.yml`](.github/workflows/android.yml)); tagged releases attach the APK with a GitHub build attestation. No binaries are committed — build locally with Gradle 8.14 (`gradle :app:assembleDebug` in `android/`, JDK 17).
 
@@ -70,6 +74,8 @@ The call runs in a foreground service (type `microphone`) with Android's voice-c
 ```bash
 ~/.hermes/hermes-agent/venv/bin/python tools/fake_phone.py wss://<your-host>/vessel/ws
 ```
+
+Typeface: [Fraunces](https://github.com/undercasetype/Fraunces) by Undercase Type, SIL Open Font License 1.1 ([`android/third_party/fraunces/OFL.txt`](android/third_party/fraunces/OFL.txt)).
 
 ## Credits
 

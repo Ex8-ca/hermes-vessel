@@ -2,161 +2,251 @@ package com.chillygeek.hermesvessel
 
 import android.Manifest
 import android.content.Intent
+import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
-import android.net.Uri
+import android.graphics.Color as AndroidColor
 import android.os.Build
 import android.os.Bundle
+import android.view.HapticFeedbackConstants
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import androidx.core.view.drawToBitmap
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import org.json.JSONObject
+import java.util.concurrent.TimeUnit
+import kotlin.math.sin
 
 class MainActivity : ComponentActivity() {
+  private val http = OkHttpClient.Builder().callTimeout(6, TimeUnit.SECONDS).build()
+  /** Short name of the paired Hermes host, or null when this phone isn't paired. */
+  private val pairedHost = MutableStateFlow<String?>(null)
+  private var demoJob: Job? = null
+
   private val permissions =
     registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { _ ->
       if (hasMic()) {
-        TalkService.start(this)
+        startCall()
       } else {
         TalkState.status.value = "error"
-        TalkState.detail.value = "Hermes needs the microphone to hear you."
+        TalkState.detail.value = "Hermes needs the microphone to hear you. Allow it in Settings."
       }
     }
 
   override fun onCreate(savedInstanceState: Bundle?) {
+    enableEdgeToEdge(
+      statusBarStyle = SystemBarStyle.dark(AndroidColor.TRANSPARENT),
+      navigationBarStyle = SystemBarStyle.dark(AndroidColor.TRANSPARENT),
+    )
     super.onCreate(savedInstanceState)
-    handlePairing(intent)
-    setContent { VesselScreen(onTap = { toggle() }) }
+    refreshPairing()
+    handleIntent(intent)
+    setContent {
+      VesselTheme {
+        val host by pairedHost.collectAsState()
+        VesselApp(
+          host = host,
+          onTalk = ::onTalk,
+          onEnd = {
+            haptic(HapticFeedbackConstants.VIRTUAL_KEY)
+            TalkService.stop(this)
+          },
+          onMute = {
+            TalkState.muted.value = !TalkState.muted.value
+            haptic(HapticFeedbackConstants.VIRTUAL_KEY)
+          },
+          onInterrupt = {
+            haptic(HapticFeedbackConstants.VIRTUAL_KEY)
+            TalkService.interrupt()
+          },
+          onPairLink = ::pairFrom,
+          onUnpair = ::unpair,
+        )
+      }
+    }
+    // Keep the screen awake while a call is on screen.
+    lifecycleScope.launch {
+      TalkState.running.collect { on ->
+        if (on) {
+          window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        } else {
+          window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+          if (demoJob == null) checkHealth()
+        }
+      }
+    }
   }
 
   override fun onNewIntent(intent: Intent) {
     super.onNewIntent(intent)
-    handlePairing(intent)
+    handleIntent(intent)
+  }
+
+  override fun onResume() {
+    super.onResume()
+    if (demoJob == null && !TalkState.running.value) checkHealth()
   }
 
   private fun hasMic() =
     ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
 
-  private fun handlePairing(intent: Intent?) {
-    val data: Uri = intent?.data ?: return
-    if (data.scheme != "hermesvessel" || data.host != "pair") return
-    val url = data.getQueryParameter("url")
-    val token = data.getQueryParameter("t")
-    if (url.isNullOrBlank() || token.isNullOrBlank()) return
-    Prefs.save(this, url, token)
-    TalkState.status.value = "idle"
-    TalkState.detail.value = "Paired with " + (Uri.parse(url).host ?: "your Hermes")
+  private fun haptic(constant: Int) {
+    window.decorView.performHapticFeedback(constant)
   }
 
-  private fun toggle() {
-    if (TalkState.running.value) {
-      TalkService.stop(this)
+  private fun refreshPairing() {
+    val url = Prefs.url(this)
+    pairedHost.value = if (url.isNotBlank() && Prefs.token(this).isNotBlank()) Pairing.hostLabel(url) else null
+  }
+
+  private fun handleIntent(intent: Intent?) {
+    if (intent == null) return
+    val demo = intent.getStringExtra("demo")
+    if (demo != null && isDebuggable()) {
+      runDemo(demo)
+      if (intent.getBooleanExtra("snap", false)) {
+        lifecycleScope.launch {
+          delay(2600)
+          saveSnapshot(demo)
+        }
+      }
       return
     }
-    if (Prefs.token(this).isBlank()) {
-      TalkState.status.value = "error"
-      TalkState.detail.value = "Not paired yet. Open the pairing link on this phone."
-      return
+    val data = intent.data
+    if (data != null && data.scheme == "hermesvessel" && data.host == "pair") pairFrom(data.toString())
+    if (intent.getBooleanExtra("snap", false) && isDebuggable()) {
+      lifecycleScope.launch {
+        delay(3500)
+        saveSnapshot("live")
+      }
     }
+  }
+
+  /** Save a pairing link (deep link or pasted page address). */
+  private fun pairFrom(text: String): Boolean {
+    val link = Pairing.parse(text) ?: return false
+    Prefs.save(this, link.wsUrl, link.token)
+    TalkState.status.value = "idle"
+    TalkState.detail.value = ""
+    TalkState.hostOnline.value = null
+    refreshPairing()
+    haptic(if (Build.VERSION.SDK_INT >= 30) HapticFeedbackConstants.CONFIRM else HapticFeedbackConstants.VIRTUAL_KEY)
+    checkHealth()
+    return true
+  }
+
+  private fun unpair() {
+    if (TalkState.running.value) TalkService.stop(this)
+    Prefs.clear(this)
+    TalkState.hostOnline.value = null
+    refreshPairing()
+  }
+
+  /** Ask the paired Hermes whether it's reachable, so the chip is honest before you tap. */
+  private fun checkHealth() {
+    val url = Pairing.healthUrl(Prefs.url(this)) ?: return
+    lifecycleScope.launch {
+      val ok = withContext(Dispatchers.IO) {
+        try {
+          http.newCall(Request.Builder().url(url).build()).execute().use { response ->
+            response.isSuccessful && JSONObject(response.body?.string() ?: "{}").optBoolean("ok")
+          }
+        } catch (e: Exception) {
+          false
+        }
+      }
+      TalkState.hostOnline.value = ok
+    }
+  }
+
+  private fun onTalk() {
+    if (TalkState.running.value) return
+    if (pairedHost.value == null) return
     val wanted = mutableListOf(Manifest.permission.RECORD_AUDIO)
     if (Build.VERSION.SDK_INT >= 33) wanted += Manifest.permission.POST_NOTIFICATIONS
     if (Build.VERSION.SDK_INT >= 31) wanted += Manifest.permission.BLUETOOTH_CONNECT
     val missing = wanted.filter { ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED }
-    if (missing.isEmpty()) TalkService.start(this) else permissions.launch(missing.toTypedArray())
+    if (missing.isEmpty()) startCall() else permissions.launch(missing.toTypedArray())
   }
-}
 
-@Composable
-fun VesselScreen(onTap: () -> Unit) {
-  val status by TalkState.status.collectAsState()
-  val detail by TalkState.detail.collectAsState()
-  val running by TalkState.running.collectAsState()
-  val lines by TalkState.lines.collectAsState()
-  val color = when (status) {
-    "listening" -> Color(0xFF2FBF8A)
-    "speaking" -> Color(0xFF5B7CFF)
-    "thinking" -> Color(0xFFA772FF)
-    "connecting" -> Color(0xFFE0A030)
-    "error" -> Color(0xFFE5484D)
-    else -> Color(0xFF34343F)
+  private fun startCall() {
+    haptic(if (Build.VERSION.SDK_INT >= 30) HapticFeedbackConstants.CONFIRM else HapticFeedbackConstants.VIRTUAL_KEY)
+    TalkState.status.value = "connecting"
+    TalkService.start(this)
   }
-  val transition = rememberInfiniteTransition(label = "pulse")
-  val pulse by transition.animateFloat(
-    initialValue = 1f,
-    targetValue = if (running && status != "connecting") 1.07f else 1f,
-    animationSpec = infiniteRepeatable(tween(900), RepeatMode.Reverse),
-    label = "scale",
-  )
-  Box(Modifier.fillMaxSize().background(Color(0xFF0B0B10)).padding(24.dp)) {
-    Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
-      Spacer(Modifier.height(40.dp))
-      Text("Hermes", color = Color.White, fontSize = 30.sp, fontWeight = FontWeight.SemiBold)
-      Text(statusLabel(status, running), color = Color(0xFFA0A0B4), fontSize = 16.sp)
-      Spacer(Modifier.weight(1f))
-      Box(
-        Modifier.size(230.dp).scale(pulse).clip(CircleShape).background(color).clickable { onTap() },
-        contentAlignment = Alignment.Center,
-      ) {
-        Text(if (running) "Hang up" else "Talk", color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Medium)
+
+  private fun isDebuggable() = (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
+
+  /** Debug builds only: render the window to <external files>/<name>.png (works on headless emulators). */
+  private fun saveSnapshot(name: String) {
+    try {
+      val bitmap = window.decorView.drawToBitmap()
+      val dir = getExternalFilesDir(null) ?: filesDir
+      java.io.File(dir, "$name.png").outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+      android.util.Log.i("VesselDemo", "snapshot saved: $dir/$name.png")
+    } catch (e: Exception) {
+      android.util.Log.e("VesselDemo", "snapshot failed", e)
+    }
+  }
+
+  /**
+   * Debug builds only: show a state without a server, for screenshots and design work.
+   * adb shell am start -n com.chillygeek.hermesvessel/.MainActivity --es demo listening
+   */
+  private fun runDemo(state: String) {
+    demoJob?.cancel()
+    val s = TalkState
+    s.resetCall()
+    pairedHost.value = if (state == "unpaired") null else "ai5080"
+    s.hostOnline.value = state != "offline"
+    s.running.value = state in setOf("connecting", "listening", "speaking", "thinking", "muted")
+    s.status.value = when (state) {
+      "muted", "speaking" -> "listening"
+      "offline", "unpaired", "ended" -> "idle"
+      else -> state
+    }
+    s.muted.value = state == "muted"
+    s.route.value = "Through Pixel Buds Pro"
+    if (state in setOf("listening", "speaking", "thinking", "muted")) {
+      s.addLine("user", "How much space is left on the server?")
+    }
+    when (state) {
+      "thinking" -> {
+        s.addLine("assistant", "One sec, I'll ask Hermes.")
+        s.detail.value = "Checking free space on the root filesystem"
+        s.thinkingSince.value = System.currentTimeMillis() - 12_000
       }
-      Spacer(Modifier.height(18.dp))
-      if (detail.isNotBlank()) {
-        Text(detail, color = Color(0xFF8A8AA3), fontSize = 13.sp, textAlign = TextAlign.Center)
-      }
-      Spacer(Modifier.weight(1f))
-      Column(Modifier.fillMaxWidth()) {
-        for ((role, text) in lines) {
-          val who = when (role) {
-            "user" -> "You"
-            "tool" -> "Hermes is"
-            else -> "Hermes"
-          }
-          Text(
-            "$who: $text",
-            color = if (role == "assistant") Color.White else Color(0xFF9A9AB0),
-            fontSize = 14.sp,
-            maxLines = 3,
-            modifier = Modifier.padding(vertical = 3.dp),
-          )
+      "speaking" -> s.liveCaption.value =
+        "You've got about 37 gigabytes free on the root filesystem. The disk is around 92 percent used, so it's getting full."
+      "error" -> s.detail.value = "Couldn't reach Hermes (timeout)"
+      "ended" -> s.lastCall.value = "Call ended \u00b7 2:31"
+    }
+    demoJob = lifecycleScope.launch {
+      var t = 0.0
+      while (true) {
+        t += 0.1
+        val wave = ((sin(t * 2.3) + 0.5 * sin(t * 5.7) + 1.5) / 3.0).toFloat().coerceIn(0f, 1f)
+        if (state == "speaking") {
+          s.playing.value = true
+          s.outLevel.value = wave
         }
+        if (state == "listening") s.micLevel.value = wave * 0.85f
+        delay(100)
       }
     }
   }
-}
-
-fun statusLabel(status: String, running: Boolean): String = when (status) {
-  "connecting" -> "Connecting…"
-  "listening" -> "Listening"
-  "thinking" -> "Hermes is working…"
-  "speaking" -> "Speaking"
-  "error" -> "Something went wrong"
-  else -> if (running) "…" else "Tap to talk"
 }

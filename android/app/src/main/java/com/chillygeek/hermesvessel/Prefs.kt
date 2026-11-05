@@ -13,4 +13,8 @@ object Prefs {
   fun save(c: Context, url: String, token: String) {
     sp(c).edit().putString("url", url).putString("token", token).apply()
   }
+
+  fun clear(c: Context) {
+    sp(c).edit().clear().apply()
+  }
 }

@@ -384,6 +384,12 @@ class PhoneSession:
                 kind = data.get("type")
                 if kind == "stop":
                     return
+                if kind == "interrupt":
+                    # Tap on the light: stop Hermes mid-sentence.
+                    if self.active_response:
+                        await self.oa_send({"type": "response.cancel"})
+                    await self.send_json({"type": "clear"})
+                    continue
                 if kind == "text" and data.get("text"):
                     await self.oa_send(
                         {
@@ -434,6 +440,10 @@ class PhoneSession:
                 await self.state("listening")
             elif kind == "conversation.item.input_audio_transcription.completed":
                 await self.send_json({"type": "transcript", "role": "user", "text": event.get("transcript", "")})
+            elif kind in ("response.output_audio_transcript.delta", "response.audio_transcript.delta"):
+                # Live captions: Hermes's words as they are spoken.
+                if event.get("delta"):
+                    await self.send_json({"type": "caption", "delta": event["delta"]})
             elif kind in ("response.output_audio_transcript.done", "response.audio_transcript.done"):
                 await self.send_json({"type": "transcript", "role": "assistant", "text": event.get("transcript", "")})
             elif kind == "response.output_item.done":
@@ -484,21 +494,60 @@ class PhoneSession:
 
 # --------------------------------------------------------------------------- HTTP server
 
-PAIR_HTML = """<!doctype html><html><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Hermes Vessel</title>
+PAIR_HTML = """<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0d0b09">
+<title>Pair with Hermes</title>
 <style>
-body{font-family:system-ui,sans-serif;background:#0b0b10;color:#eee;padding:24px;max-width:520px;margin:auto}
-h1{font-weight:600} p{color:#aab;line-height:1.5}
-a.btn{display:block;padding:18px;margin:14px 0 24px;border-radius:16px;background:#5b5bd6;color:#fff;
-text-align:center;text-decoration:none;font-size:20px}
-</style></head><body>
-<h1>Hermes Vessel</h1>
-<p><b>1.</b> Install the app. If Android asks, allow installs from Chrome.</p>
-<a class="btn" href="app.apk">Download the app</a>
-<p><b>2.</b> After it's installed, pair it with your Hermes.</p>
-<a class="btn" id="pair" href="#">Pair this phone</a>
-<p>Then tap the big button in the app and talk.</p>
+:root{--ink:#0d0b09;--ivory:#f1eadf;--muted:#9c9388;--gold:#e9ae5b;--gold-light:#f6cd84}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--ink);color:var(--ivory)}
+body{font:16px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;min-height:100vh;
+ background:radial-gradient(120% 55% at 50% 16%,rgba(233,174,91,.16),transparent 70%),linear-gradient(#18130f,var(--ink) 60%);
+ padding:max(28px,env(safe-area-inset-top)) 24px max(28px,env(safe-area-inset-bottom))}
+main{max-width:440px;margin:0 auto;text-align:center}
+.orb{width:116px;height:116px;margin:16px auto 34px;border-radius:50%;position:relative;
+ background:radial-gradient(circle at 44% 40%,#fdf0d4 0,#f6cd84 34%,#e9ae5b 72%,#d18f45 100%);
+ box-shadow:0 0 36px 10px rgba(233,174,91,.38),0 0 120px 34px rgba(233,174,91,.13);
+ animation:breathe 4.2s ease-in-out infinite}
+.orb::after{content:"";position:absolute;inset:-16px;border-radius:50%;border:1px solid rgba(241,234,223,.09)}
+@keyframes breathe{50%{transform:scale(1.05);box-shadow:0 0 48px 14px rgba(233,174,91,.45),0 0 140px 44px rgba(233,174,91,.15)}}
+@media (prefers-reduced-motion:reduce){.orb{animation:none}}
+h1{font:400 34px/1.15 "Fraunces","Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;letter-spacing:-.4px;margin:0 0 10px}
+p.lede{color:var(--muted);margin:0 auto 34px;max-width:330px}
+ol{list-style:none;padding:0;margin:0;text-align:left}
+li{display:flex;gap:14px;margin:0 0 26px}
+.n{flex:none;width:28px;height:28px;border-radius:50%;border:1px solid rgba(233,174,91,.6);color:var(--gold-light);
+ display:grid;place-items:center;font-size:13px;margin-top:1px}
+li div.t{flex:1}
+li b{display:block;font-weight:600;margin-bottom:2px}
+li span{color:var(--muted);font-size:14px}
+a.btn{display:block;margin:12px 0 0;padding:16px;border-radius:30px;text-align:center;text-decoration:none;
+ font-weight:600;font-size:17px;color:var(--ink);background:linear-gradient(90deg,var(--gold-light),var(--gold))}
+a.btn.ghost{background:none;color:var(--gold-light);border:1px solid rgba(233,174,91,.45)}
+a.btn:active{transform:scale(.98)}
+.desktop{display:none;border:1px solid rgba(241,234,223,.12);border-radius:16px;padding:14px 16px;margin:0 0 30px;
+ color:var(--muted);font-size:14px;text-align:left}
+code{font:13px ui-monospace,monospace;color:var(--gold-light)}
+.note{margin-top:8px;font-size:13px;color:var(--muted)}
+</style></head><body><main>
+<div class="orb" aria-hidden="true"></div>
+<h1>Give Hermes a body</h1>
+<p class="lede">Two taps and this phone becomes a voice for your Hermes.</p>
+<div class="desktop" id="desktop">Open this page on your Android phone: scan the QR code that
+<code>hermes vessel pair</code> printed in your terminal.</div>
+<ol>
+<li><div class="n">1</div><div class="t"><b>Install the app</b>
+<span>If Android asks, allow installs from your browser, then tap Install.</span>
+<a class="btn ghost" href="app.apk">Download Hermes Vessel</a></div></li>
+<li><div class="n">2</div><div class="t"><b>Pair this phone</b>
+<span>Opens the app already connected to your Hermes.</span>
+<a class="btn" id="pair" href="#">Pair this phone</a></div></li>
+<li><div class="n">3</div><div class="t"><b>Tap the light and talk</b>
+<span>A connected headset is used automatically.</span></div></li>
+</ol>
+<p class="note">This page is a key to your Hermes. Keep the link to yourself.</p>
+</main>
 <script>
 const t = "__TOKEN__";
 const base = location.href.split('?')[0].replace(/[^/]*$/, '');
@@ -506,6 +555,7 @@ const ws = base.replace(/^http/, 'ws') + 'ws';
 const q = 'url=' + encodeURIComponent(ws) + '&t=' + encodeURIComponent(t);
 document.getElementById('pair').href =
   'intent://pair?' + q + '#Intent;scheme=hermesvessel;package=com.chillygeek.hermesvessel;end';
+if (!/Android/i.test(navigator.userAgent)) document.getElementById('desktop').style.display = 'block';
 </script></body></html>"""
 
 
@@ -580,13 +630,32 @@ def _tailnet_name() -> str:
         return ""
 
 
+def _print_qr(url: str) -> bool:
+    """Print a scannable QR code (light modules as blocks, so it scans on dark terminals)."""
+    try:
+        import qrcode
+        from qrcode.constants import ERROR_CORRECT_L
+    except ImportError:
+        return False
+    qr = qrcode.QRCode(border=2, error_correction=ERROR_CORRECT_L)
+    qr.add_data(url)
+    qr.make(fit=True)
+    qr.print_ascii(invert=True)
+    return True
+
+
 def cli_pair() -> int:
     host = _tailnet_name()
     token = pair_token()
-    if host:
-        print(f"https://{host}/vessel/?t={token}")
-    else:
+    if not host:
         print(f"Pairing token: {token}  (serve the vessel server over HTTPS and open /?t=<token>)")
+        return 0
+    url = f"https://{host}/vessel/?t={token}"
+    print("Scan this with your Android phone's camera, or open the link on the phone:\n")
+    if not _print_qr(url):
+        print("(Install the `qrcode` package for a scannable code.)")
+    print(f"\n{url}\n")
+    print("This link is a key to your Hermes: keep it to yourself.")
     return 0
 
 

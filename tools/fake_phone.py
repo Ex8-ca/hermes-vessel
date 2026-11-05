@@ -4,7 +4,8 @@ Phase 1: a typed turn that needs Hermes (exercises ask_hermes).
 Phase 2: real speech (the WAV saved by `hermes vessel selftest`) injected into the mic stream
          (exercises voice activity detection, transcription and the spoken reply).
 
-Usage: python tools/fake_phone.py [ws-url] [--skip-hermes]
+Usage: python tools/fake_phone.py [ws-url] [--skip-hermes] [--interrupt]
+       --interrupt: one second into the spoken reply, tap "interrupt" and check that Hermes stops.
        default url: ws://127.0.0.1:8796/ws
 """
 import asyncio
@@ -24,6 +25,7 @@ TOKEN = (DATA / "pair_token").read_text().strip()
 ARGS = [a for a in sys.argv[1:] if not a.startswith("--")]
 URL = ARGS[0] if ARGS else "ws://127.0.0.1:8796/ws"
 SKIP_PHASE1 = "--skip-hermes" in sys.argv
+INTERRUPT = "--interrupt" in sys.argv
 CHUNK = 4800  # 100 ms of PCM16 mono at 24 kHz
 
 
@@ -34,6 +36,7 @@ def room_noise() -> bytes:
 async def main() -> None:
     t0 = time.monotonic()
     audio = {"bytes": 0}
+    seen = {"captions": 0, "clear": 0}
     speech_queue: asyncio.Queue = asyncio.Queue()
     tool_seen = asyncio.Event()
     answered = asyncio.Event()
@@ -52,6 +55,11 @@ async def main() -> None:
                         audio["bytes"] += len(msg.data)
                     elif msg.type == aiohttp.WSMsgType.TEXT:
                         event = json.loads(msg.data)
+                        if event.get("type") == "caption":
+                            seen["captions"] += 1  # live caption deltas: count, don't print each
+                            continue
+                        if event.get("type") == "clear":
+                            seen["clear"] += 1
                         print(stamp(), event, flush=True)
                         if event.get("type") == "transcript" and event.get("role") == "tool":
                             tool_seen.set()
@@ -90,24 +98,43 @@ async def main() -> None:
 
             phase["n"] = 2
             before = audio["bytes"]
-            print(stamp(), "PHASE 2: speaking into the mic stream", flush=True)
-            with wave.open(str(DATA / "selftest.wav")) as w:
-                pcm = w.readframes(w.getnframes())
-            for i in range(0, len(pcm), CHUNK):
-                frame = pcm[i:i + CHUNK]
-                speech_queue.put_nowait(frame + b"\x00" * (CHUNK - len(frame)))
-            await asyncio.sleep(len(pcm) / 48000)
+            if INTERRUPT:
+                # A long answer, so Hermes is still talking when we tap.
+                print(stamp(), "PHASE 2: asking for a long story, then interrupting it", flush=True)
+                await ws.send_str(json.dumps({
+                    "type": "text",
+                    "text": "Tell me a detailed five-paragraph story about a lighthouse keeper.",
+                }))
+            else:
+                print(stamp(), "PHASE 2: speaking into the mic stream", flush=True)
+                with wave.open(str(DATA / "selftest.wav")) as w:
+                    pcm = w.readframes(w.getnframes())
+                for i in range(0, len(pcm), CHUNK):
+                    frame = pcm[i:i + CHUNK]
+                    speech_queue.put_nowait(frame + b"\x00" * (CHUNK - len(frame)))
+                await asyncio.sleep(len(pcm) / 48000)
             spoke_end = time.monotonic()
             while audio["bytes"] == before and time.monotonic() - spoke_end < 30:
                 await asyncio.sleep(0.05)
             if audio["bytes"] > before:
                 print(stamp(), f"reply audio began {time.monotonic() - spoke_end:.2f}s after speech ended", flush=True)
-            try:
-                await asyncio.wait_for(spoken_reply.wait(), 30)
-            except asyncio.TimeoutError:
-                print(stamp(), "phase 2 timed out", flush=True)
+            if INTERRUPT and audio["bytes"] > before:
+                await asyncio.sleep(1.0)
+                clears = seen["clear"]
+                await ws.send_str(json.dumps({"type": "interrupt"}))
+                print(stamp(), "sent interrupt", flush=True)
+                await asyncio.sleep(1.5)
+                at = audio["bytes"]
+                await asyncio.sleep(2.0)
+                stopped = audio["bytes"] == at
+                print(stamp(), f"interrupt: clear received={seen['clear'] > clears}, audio stopped={stopped}", flush=True)
+            else:
+                try:
+                    await asyncio.wait_for(spoken_reply.wait(), 30)
+                except asyncio.TimeoutError:
+                    print(stamp(), "phase 2 timed out", flush=True)
             await asyncio.sleep(2)
-            print(stamp(), f"phase 2 audio back: {(audio['bytes'] - before) / 48000:.1f}s", flush=True)
+            print(stamp(), f"phase 2 audio back: {(audio['bytes'] - before) / 48000:.1f}s; live caption deltas: {seen['captions']}", flush=True)
             await ws.send_str(json.dumps({"type": "stop"}))
             await asyncio.sleep(1)
             mic_task.cancel()
