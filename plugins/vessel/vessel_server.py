@@ -9,8 +9,9 @@ Architecture (one phone conversation):
 * The OpenAI session is minted with the user's ChatGPT/Codex sign-in through
   Hermes's ``credentialed_provider_request``; this module never sees that token,
   only the short-lived client secret the mint returns.
-* The realtime model is the ears and mouth. Anything that needs tools, memory,
-  files or current facts goes to Hermes through the ``ask_hermes`` function.
+* The realtime model is Hermes's ears and mouth, and speaks as Hermes. Anything that
+  needs tools, memory, files or current facts runs as a real Hermes agent turn through
+  the ``use_tools`` function (the voice is told this is its own work, not someone else's).
 """
 
 from __future__ import annotations
@@ -38,19 +39,21 @@ SAMPLE_RATE = 24000
 API_SERVER_URL = os.environ.get("VESSEL_API_SERVER_URL", "http://127.0.0.1:6789").rstrip("/")
 HERMES_TIMEOUT_S = float(os.environ.get("VESSEL_HERMES_TIMEOUT_S", "240"))
 
-ASK_HERMES_TOOL = {
+# Named and described as the voice's own hands: an earlier "ask_hermes" made the voice talk
+# about Hermes in the third person ("I'll check with Hermes"), when it *is* Hermes.
+USE_TOOLS_TOOL = {
     "type": "function",
-    "name": "ask_hermes",
+    "name": "use_tools",
     "description": (
-        "Hand a request to Hermes, the user's full agent. Use it for anything that needs tools, "
-        "files, the web, memory of past conversations, the calendar, smart-home devices, code, "
-        "or facts you are not sure of. Write the request as a complete, self-contained instruction. "
+        "Use your own tools: files, the web, your memory of past conversations, the calendar, "
+        "smart-home devices, code. Use it for anything that needs them, and for facts you are not sure of. "
+        "Describe the task as one complete, self-contained instruction. "
         "It can take from a few seconds to a few minutes."
     ),
     "parameters": {
         "type": "object",
         "properties": {
-            "request": {"type": "string", "description": "What Hermes should do or answer, with all needed context."}
+            "request": {"type": "string", "description": "The task, with all the context needed to do it."}
         },
         "required": ["request"],
     },
@@ -136,10 +139,13 @@ def build_instructions() -> str:
         f"It is now {now}.",
         "This is a spoken conversation: answer in one to three short, natural sentences unless they ask for more. "
         "Be warm and direct. No lists, no markdown, no reading out URLs.",
-        "For anything that needs tools, files, the web, past conversations, the calendar, smart-home devices, code, "
-        "or facts you are not sure of, call ask_hermes with a complete, self-contained request. Before calling it, say "
-        "a very short line like 'One sec.' When the answer comes back, tell them the gist conversationally. Never make "
-        "up results. If Hermes fails, say so plainly.",
+        "You have your full set of tools: files, the web, your memory of past conversations, the calendar, "
+        "smart-home devices and code. For anything that needs them, or facts you are not sure of, call use_tools "
+        "with a complete, self-contained request. Before calling it, say a very short line like 'One sec, let me "
+        "check.' The work is yours: say 'I checked' or 'I found', never that you will ask, check with or hear back "
+        "from anyone, and never talk about Hermes in the third person. If they say 'ask Hermes', they mean you: "
+        "handle it without remarking on it, using use_tools when it needs your memory or tools. When the result comes back, tell them the gist conversationally. Never make up results. If it "
+        "fails, say so plainly.",
         "If they interrupt you, stop and listen.",
     ]
     if soul:
@@ -207,7 +213,7 @@ def build_session(voice: Optional[str] = None) -> dict:
             },
             "output": {"format": {"type": "audio/pcm", "rate": SAMPLE_RATE}, "voice": voice or VOICE},
         },
-        "tools": [ASK_HERMES_TOOL],
+        "tools": [USE_TOOLS_TOOL],
         "tool_choice": "auto",
     }
 
@@ -521,13 +527,13 @@ class PhoneSession:
             args = json.loads(item.get("arguments") or "{}")
         except ValueError:
             args = {}
-        if name == "ask_hermes":
+        if name in ("use_tools", "ask_hermes"):  # ask_hermes: sessions minted before the rename
             request = str(args.get("request") or "").strip()
             await self.state("thinking", request[:120])
-            await self.send_json({"type": "transcript", "role": "tool", "text": f"Asking Hermes: {request}"})
-            log.info("ask_hermes: %s", request[:200])
+            await self.send_json({"type": "transcript", "role": "tool", "text": f"Working on: {request}"})
+            log.info("use_tools: %s", request[:200])
             result = await self.bridge.ask(request)
-            log.info("ask_hermes result: %s", result[:200])
+            log.info("use_tools result: %s", result[:200])
         else:
             result = f"Unknown function {name}."
         await self.oa_send(

@@ -1,6 +1,6 @@
 """Play the phone against a running vessel server, with a continuous mic stream like a real phone.
 
-Phase 1: a typed turn that needs Hermes (exercises ask_hermes).
+Phase 1: a typed turn that needs tools (exercises use_tools, a real Hermes agent turn).
 Phase 2: real speech (the WAV saved by `hermes vessel selftest`) injected into the mic stream
          (exercises voice activity detection, transcription and the spoken reply).
 
@@ -87,7 +87,7 @@ async def main() -> None:
                 print(stamp(), "PHASE 1: typed turn that needs Hermes", flush=True)
                 await ws.send_str(json.dumps({
                     "type": "text",
-                    "text": "Ask Hermes how much free space is left on the root filesystem of this computer, then tell me.",
+                    "text": "How much free space is left on the root filesystem of this computer?",
                 }))
                 try:
                     await asyncio.wait_for(answered.wait(), 150)

@@ -15,14 +15,14 @@ Give your Hermes Agent a phone as its body. Tap one button on an Android phone a
 ```
 Android app ──WSS (PCM16 24 kHz + small JSON control)──▶ vessel plugin server (on your Hermes host)
                                                              │  ├─▶ OpenAI Realtime   (voice; session minted with your ChatGPT sign-in)
-                                                             │  └─▶ Hermes API server (/v1/runs) for real work: ask_hermes(...)
+                                                             │  └─▶ Hermes API server (/v1/runs) for real work: use_tools(...)
 ```
 
 Measured over a Tailscale tailnet: a reply starts about **1 second** after you stop talking. A hand-off to Hermes takes as long as the agent run (a few seconds to a minute); the voice says so instead of going silent.
 
 ## Requirements
 
-- Hermes Agent with the **API server** enabled (`API_SERVER_KEY` set) — `ask_hermes` runs real agent turns through it.
+- Hermes Agent with the **API server** enabled (`API_SERVER_KEY` set) — the voice's `use_tools` function runs real agent turns through it.
 - A ChatGPT subscription, signed in **inside Hermes**: `hermes auth add openai-codex --type oauth --no-browser` (a Codex CLI login does not count).
 - An Android phone (8.0+) and a way for it to reach the Hermes host over HTTPS. The tested setup is [Tailscale](https://tailscale.com) on both, with `tailscale serve`.
 - Python packages `aiohttp`, `httpx` and `qrcode`, declared in [`plugins/vessel/pyproject.toml`](plugins/vessel/pyproject.toml). Hermes asks for consent and installs them when you enable the plugin. No other plugin is needed.
