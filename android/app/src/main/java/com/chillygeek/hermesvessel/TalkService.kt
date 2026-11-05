@@ -1,4 +1,4 @@
-package com.chillygeek.hermescompanion
+package com.chillygeek.hermesvessel
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -41,13 +41,13 @@ import java.util.concurrent.TimeUnit
  * One voice call with Hermes. Runs as a foreground service so the call keeps
  * going with the screen off or the phone in a pocket.
  *
- * Wire format to the companion server: binary frames are 16-bit mono PCM at
+ * Wire format to the vessel server: binary frames are 16-bit mono PCM at
  * 24 kHz in both directions; text frames are small JSON control messages.
  */
 class TalkService : Service() {
   companion object {
     private const val TAG = "TalkService"
-    private const val ACTION_STOP = "com.chillygeek.hermescompanion.STOP"
+    private const val ACTION_STOP = "com.chillygeek.hermesvessel.STOP"
     private const val SAMPLE_RATE = 24000
     private const val CHUNK_BYTES = 4800 // 100 ms
 

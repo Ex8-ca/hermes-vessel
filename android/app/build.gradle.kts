@@ -5,13 +5,13 @@ plugins {
 }
 
 android {
-  namespace = "com.chillygeek.hermescompanion"
+  namespace = "com.chillygeek.hermesvessel"
   compileSdk = 36
 
   buildFeatures { compose = true }
 
   defaultConfig {
-    applicationId = "com.chillygeek.hermescompanion"
+    applicationId = "com.chillygeek.hermesvessel"
     minSdk = 26
     targetSdk = 36
     versionCode = 1

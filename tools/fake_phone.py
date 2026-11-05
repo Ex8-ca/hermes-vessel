@@ -1,7 +1,7 @@
-"""Play the phone against a running companion server, with a continuous mic stream like a real phone.
+"""Play the phone against a running vessel server, with a continuous mic stream like a real phone.
 
 Phase 1: a typed turn that needs Hermes (exercises ask_hermes).
-Phase 2: real speech (the WAV saved by `hermes companion selftest`) injected into the mic stream
+Phase 2: real speech (the WAV saved by `hermes vessel selftest`) injected into the mic stream
          (exercises voice activity detection, transcription and the spoken reply).
 
 Usage: python tools/fake_phone.py [ws-url] [--skip-hermes]
@@ -19,7 +19,7 @@ from pathlib import Path
 
 import aiohttp
 
-DATA = Path(os.environ.get("HERMES_HOME", Path.home() / ".hermes")) / "plugin-data" / "companion"
+DATA = Path(os.environ.get("HERMES_HOME", Path.home() / ".hermes")) / "plugin-data" / "vessel"
 TOKEN = (DATA / "pair_token").read_text().strip()
 ARGS = [a for a in sys.argv[1:] if not a.startswith("--")]
 URL = ARGS[0] if ARGS else "ws://127.0.0.1:8796/ws"

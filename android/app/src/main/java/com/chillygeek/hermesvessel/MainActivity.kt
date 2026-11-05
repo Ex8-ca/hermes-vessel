@@ -1,4 +1,4 @@
-package com.chillygeek.hermescompanion
+package com.chillygeek.hermesvessel
 
 import android.Manifest
 import android.content.Intent
@@ -54,7 +54,7 @@ class MainActivity : ComponentActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
     handlePairing(intent)
-    setContent { CompanionScreen(onTap = { toggle() }) }
+    setContent { VesselScreen(onTap = { toggle() }) }
   }
 
   override fun onNewIntent(intent: Intent) {
@@ -67,7 +67,7 @@ class MainActivity : ComponentActivity() {
 
   private fun handlePairing(intent: Intent?) {
     val data: Uri = intent?.data ?: return
-    if (data.scheme != "hermescompanion" || data.host != "pair") return
+    if (data.scheme != "hermesvessel" || data.host != "pair") return
     val url = data.getQueryParameter("url")
     val token = data.getQueryParameter("t")
     if (url.isNullOrBlank() || token.isNullOrBlank()) return
@@ -95,7 +95,7 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun CompanionScreen(onTap: () -> Unit) {
+fun VesselScreen(onTap: () -> Unit) {
   val status by TalkState.status.collectAsState()
   val detail by TalkState.detail.collectAsState()
   val running by TalkState.running.collectAsState()

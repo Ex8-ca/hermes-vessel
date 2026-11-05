@@ -1,0 +1,11 @@
+[project]
+name = "hermes-vessel"
+version = "0.1.0"
+description = "Give Hermes a phone as its body: one-tap realtime voice from Android to your Hermes."
+requires-python = ">=3.11"
+# aiohttp is not part of a core Hermes install (only optional extras), so declare it.
+# httpx is listed for completeness; core Hermes already ships it.
+dependencies = [
+    "aiohttp>=3.9,<4",
+    "httpx>=0.27,<1",
+]

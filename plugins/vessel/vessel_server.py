@@ -1,4 +1,4 @@
-"""Phone link server for the companion plugin.
+"""Phone link server for the vessel plugin.
 
 Architecture (one phone conversation):
 
@@ -27,15 +27,15 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
-log = logging.getLogger("companion")
+log = logging.getLogger("vessel")
 
-MODEL = os.environ.get("COMPANION_MODEL", "gpt-realtime-2.1")
-VOICE = os.environ.get("COMPANION_VOICE", "cedar")
+MODEL = os.environ.get("VESSEL_MODEL", "gpt-realtime-2.1")
+VOICE = os.environ.get("VESSEL_VOICE", "cedar")
 CLIENT_SECRETS_URL = "https://api.openai.com/v1/realtime/client_secrets"
 REALTIME_WS_URL = "wss://api.openai.com/v1/realtime"
 SAMPLE_RATE = 24000
-API_SERVER_URL = os.environ.get("COMPANION_API_SERVER_URL", "http://127.0.0.1:6789").rstrip("/")
-HERMES_TIMEOUT_S = float(os.environ.get("COMPANION_HERMES_TIMEOUT_S", "240"))
+API_SERVER_URL = os.environ.get("VESSEL_API_SERVER_URL", "http://127.0.0.1:6789").rstrip("/")
+HERMES_TIMEOUT_S = float(os.environ.get("VESSEL_HERMES_TIMEOUT_S", "240"))
 
 ASK_HERMES_TOOL = {
     "type": "function",
@@ -63,9 +63,9 @@ def _data_dir() -> Path:
     try:
         from plugins.plugin_storage import plugin_data_dir
 
-        path = Path(plugin_data_dir("companion"))
+        path = Path(plugin_data_dir("vessel"))
     except Exception:  # pragma: no cover - outside Hermes
-        path = Path.home() / ".hermes" / "plugin-data" / "companion"
+        path = Path.home() / ".hermes" / "plugin-data" / "vessel"
     path.mkdir(parents=True, exist_ok=True)
     return path
 
@@ -131,19 +131,19 @@ def build_instructions() -> str:
 
 def turn_detection() -> dict:
     """Server VAD by default: replies ~1 s after you stop. semantic_vad waits up to 4 s on pauses."""
-    mode = os.environ.get("COMPANION_TURN_DETECTION", "server_vad").strip().lower()
+    mode = os.environ.get("VESSEL_TURN_DETECTION", "server_vad").strip().lower()
     if mode == "semantic_vad":
         return {
             "type": "semantic_vad",
-            "eagerness": os.environ.get("COMPANION_EAGERNESS", "auto").strip().lower(),
+            "eagerness": os.environ.get("VESSEL_EAGERNESS", "auto").strip().lower(),
             "create_response": True,
             "interrupt_response": True,
         }
     return {
         "type": "server_vad",
-        "threshold": float(os.environ.get("COMPANION_VAD_THRESHOLD", "0.5")),
+        "threshold": float(os.environ.get("VESSEL_VAD_THRESHOLD", "0.5")),
         "prefix_padding_ms": 300,
-        "silence_duration_ms": int(os.environ.get("COMPANION_SILENCE_MS", "550")),
+        "silence_duration_ms": int(os.environ.get("VESSEL_SILENCE_MS", "550")),
         "create_response": True,
         "interrupt_response": True,
     }
@@ -171,7 +171,7 @@ def build_session() -> dict:
 # --------------------------------------------------------------------------- mint
 
 
-class CompanionError(RuntimeError):
+class VesselError(RuntimeError):
     pass
 
 
@@ -190,15 +190,15 @@ def mint_client_secret() -> str:
             "openai-codex", "POST", CLIENT_SECRETS_URL, json={"session": build_session()}, timeout=30.0
         )
     except ProviderNotSignedIn as exc:
-        raise CompanionError(str(exc)) from None
+        raise VesselError(str(exc)) from None
     if response.status != 200:
-        raise CompanionError(f"OpenAI refused the voice session ({response.status}): {response.text[:300]}")
+        raise VesselError(f"OpenAI refused the voice session ({response.status}): {response.text[:300]}")
     payload = response.json()
     value = payload.get("value")
     if not value and isinstance(payload.get("client_secret"), dict):
         value = payload["client_secret"].get("value")
     if not isinstance(value, str) or not value:
-        raise CompanionError("OpenAI returned no session secret")
+        raise VesselError("OpenAI returned no session secret")
     return value
 
 
@@ -216,7 +216,7 @@ def _hermes_home() -> Path:
 
 def _api_server_key() -> str:
     """The gateway API key, read through Hermes (process scope first, then the profile's own secrets)."""
-    names = ("COMPANION_API_SERVER_KEY", "API_SERVER_KEY")
+    names = ("VESSEL_API_SERVER_KEY", "API_SERVER_KEY")
     try:
         from agent.secret_scope import get_secret
 
@@ -264,7 +264,7 @@ class HermesBridge:
     def _ask_sync(self, request: str) -> str:
         import httpx
 
-        headers = {"Content-Type": "application/json", "X-Hermes-Session-Key": "companion"}
+        headers = {"Content-Type": "application/json", "X-Hermes-Session-Key": "vessel"}
         key = _api_server_key()
         if key:
             headers["Authorization"] = f"Bearer {key}"
@@ -486,14 +486,14 @@ class PhoneSession:
 
 PAIR_HTML = """<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Hermes Companion</title>
+<title>Hermes Vessel</title>
 <style>
 body{font-family:system-ui,sans-serif;background:#0b0b10;color:#eee;padding:24px;max-width:520px;margin:auto}
 h1{font-weight:600} p{color:#aab;line-height:1.5}
 a.btn{display:block;padding:18px;margin:14px 0 24px;border-radius:16px;background:#5b5bd6;color:#fff;
 text-align:center;text-decoration:none;font-size:20px}
 </style></head><body>
-<h1>Hermes Companion</h1>
+<h1>Hermes Vessel</h1>
 <p><b>1.</b> Install the app. If Android asks, allow installs from Chrome.</p>
 <a class="btn" href="app.apk">Download the app</a>
 <p><b>2.</b> After it's installed, pair it with your Hermes.</p>
@@ -505,7 +505,7 @@ const base = location.href.split('?')[0].replace(/[^/]*$/, '');
 const ws = base.replace(/^http/, 'ws') + 'ws';
 const q = 'url=' + encodeURIComponent(ws) + '&t=' + encodeURIComponent(t);
 document.getElementById('pair').href =
-  'intent://pair?' + q + '#Intent;scheme=hermescompanion;package=com.chillygeek.hermescompanion;end';
+  'intent://pair?' + q + '#Intent;scheme=hermesvessel;package=com.chillygeek.hermesvessel;end';
 </script></body></html>"""
 
 
@@ -519,7 +519,7 @@ def make_app():
 
     async def index(request):
         if not secrets.compare_digest(request.query.get("t", ""), token):
-            return web.Response(status=403, text="Open the pairing link from `hermes companion pair`.")
+            return web.Response(status=403, text="Open the pairing link from `hermes vessel pair`.")
         return web.Response(text=PAIR_HTML.replace("__TOKEN__", token), content_type="text/html")
 
     async def apk(_request):
@@ -530,7 +530,7 @@ def make_app():
             path,
             headers={
                 "Content-Type": "application/vnd.android.package-archive",
-                "Content-Disposition": 'attachment; filename="hermes-companion.apk"',
+                "Content-Disposition": 'attachment; filename="hermes-vessel.apk"',
             },
         )
 
@@ -545,7 +545,7 @@ def make_app():
         return ws
 
     app = web.Application()
-    for prefix in ("", "/companion"):
+    for prefix in ("", "/vessel"):
         app.router.add_get(prefix + "/health", health)
         app.router.add_get(prefix + "/", index)
         app.router.add_get(prefix + "/app.apk", apk)
@@ -565,7 +565,7 @@ def cli_serve(host: str, port: int) -> int:
     from aiohttp import web
 
     _setup_logging()
-    log.info("companion server on http://%s:%d (model %s, voice %s)", host, port, MODEL, VOICE)
+    log.info("vessel server on http://%s:%d (model %s, voice %s)", host, port, MODEL, VOICE)
     web.run_app(make_app(), host=host, port=port, print=None)
     return 0
 
@@ -584,9 +584,9 @@ def cli_pair() -> int:
     host = _tailnet_name()
     token = pair_token()
     if host:
-        print(f"https://{host}/companion/?t={token}")
+        print(f"https://{host}/vessel/?t={token}")
     else:
-        print(f"Pairing token: {token}  (serve the companion server over HTTPS and open /?t=<token>)")
+        print(f"Pairing token: {token}  (serve the vessel server over HTTPS and open /?t=<token>)")
     return 0
 
 
@@ -640,6 +640,6 @@ def cli_selftest() -> int:
 
     try:
         return asyncio.run(main())
-    except CompanionError as exc:
+    except VesselError as exc:
         print(f"selftest failed: {exc}")
         return 1

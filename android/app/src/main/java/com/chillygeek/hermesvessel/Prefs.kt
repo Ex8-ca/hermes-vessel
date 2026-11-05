@@ -1,10 +1,10 @@
-package com.chillygeek.hermescompanion
+package com.chillygeek.hermesvessel
 
 import android.content.Context
 
 /** Pairing settings: the server WebSocket URL and the pairing token. */
 object Prefs {
-  private fun sp(c: Context) = c.getSharedPreferences("companion", Context.MODE_PRIVATE)
+  private fun sp(c: Context) = c.getSharedPreferences("vessel", Context.MODE_PRIVATE)
 
   fun url(c: Context): String = sp(c).getString("url", "") ?: ""
 

@@ -64,20 +64,20 @@ jobs:
 
       - name: Collect APK
         run: |
-          cp app/build/outputs/apk/debug/app-debug.apk "$GITHUB_WORKSPACE/hermes-companion.apk"
-          sha256sum "$GITHUB_WORKSPACE/hermes-companion.apk" | tee -a "$GITHUB_STEP_SUMMARY"
+          cp app/build/outputs/apk/debug/app-debug.apk "$GITHUB_WORKSPACE/hermes-vessel.apk"
+          sha256sum "$GITHUB_WORKSPACE/hermes-vessel.apk" | tee -a "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: hermes-companion-apk
-          path: hermes-companion.apk
+          name: hermes-vessel-apk
+          path: hermes-vessel.apk
 
       # Attestations need a public repository (or GitHub Enterprise Cloud).
       - name: Attest build provenance
         if: ${{ !github.event.repository.private && github.event_name != 'pull_request' }}
         uses: actions/attest-build-provenance@v2
         with:
-          subject-path: hermes-companion.apk
+          subject-path: hermes-vessel.apk
 
       - name: Publish release
         if: startsWith(github.ref, 'refs/tags/v')
@@ -85,6 +85,6 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
         run: |
-          gh release create "$GITHUB_REF_NAME" --title "Hermes Companion $GITHUB_REF_NAME" --generate-notes \
-            "$GITHUB_WORKSPACE/hermes-companion.apk" \
-            || gh release upload "$GITHUB_REF_NAME" "$GITHUB_WORKSPACE/hermes-companion.apk" --clobber
+          gh release create "$GITHUB_REF_NAME" --title "Hermes Vessel $GITHUB_REF_NAME" --generate-notes \
+            "$GITHUB_WORKSPACE/hermes-vessel.apk" \
+            || gh release upload "$GITHUB_REF_NAME" "$GITHUB_WORKSPACE/hermes-vessel.apk" --clobber

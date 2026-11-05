@@ -1,4 +1,4 @@
-package com.chillygeek.hermescompanion
+package com.chillygeek.hermesvessel
 
 import kotlinx.coroutines.flow.MutableStateFlow
 
