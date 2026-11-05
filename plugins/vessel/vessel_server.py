@@ -30,7 +30,8 @@ from typing import Any, Optional
 log = logging.getLogger("vessel")
 
 MODEL = os.environ.get("VESSEL_MODEL", "gpt-realtime-2.1")
-VOICE = os.environ.get("VESSEL_VOICE", "cedar")
+# Marin: OpenAI's most natural female voice for gpt-realtime. Others: cedar, shimmer, coral, sage, alloy, ash, ballad, echo, verse.
+VOICE = os.environ.get("VESSEL_VOICE", "marin")
 CLIENT_SECRETS_URL = "https://api.openai.com/v1/realtime/client_secrets"
 REALTIME_WS_URL = "wss://api.openai.com/v1/realtime"
 SAMPLE_RATE = 24000
@@ -659,9 +660,18 @@ def cli_pair() -> int:
     return 0
 
 
-def cli_selftest() -> int:
+def cli_selftest(voice: Optional[str] = None, say: Optional[str] = None, out: Optional[str] = None) -> int:
     """Mint a session, ask for one spoken sentence, save it as a WAV. No phone needed."""
     import aiohttp
+
+    global VOICE
+    if voice:
+        VOICE = voice.strip().lower()
+    prompt = (
+        f"Say exactly this, warmly and naturally, and nothing else: {say}"
+        if say
+        else "This is a connection test. Greet me in one short sentence."
+    )
 
     async def main() -> int:
         started = time.monotonic()
@@ -679,7 +689,7 @@ def cli_selftest() -> int:
                 await oa.send_str(json.dumps({
                     "type": "conversation.item.create",
                     "item": {"type": "message", "role": "user", "content": [
-                        {"type": "input_text", "text": "This is a connection test. Greet me in one short sentence."}]},
+                        {"type": "input_text", "text": prompt}]},
                 }))
                 asked = time.monotonic()
                 await oa.send_str(json.dumps({"type": "response.create"}))
@@ -697,14 +707,14 @@ def cli_selftest() -> int:
                         return 1
                     elif kind == "response.done":
                         break
-        out = _data_dir() / "selftest.wav"
-        with wave.open(str(out), "wb") as wav:
+        target = Path(out) if out else _data_dir() / "selftest.wav"
+        with wave.open(str(target), "wb") as wav:
             wav.setnchannels(1)
             wav.setsampwidth(2)
             wav.setframerate(SAMPLE_RATE)
             wav.writeframes(bytes(pcm))
         print(f"reply: {transcript!r}")
-        print(f"first audio after {first_audio or 0:.2f}s; {len(pcm) / (2 * SAMPLE_RATE):.1f}s of speech -> {out}")
+        print(f"voice {VOICE}: first audio after {first_audio or 0:.2f}s; {len(pcm) / (2 * SAMPLE_RATE):.1f}s of speech -> {target}")
         return 0
 
     try:

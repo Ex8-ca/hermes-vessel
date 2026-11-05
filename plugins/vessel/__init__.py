@@ -14,7 +14,10 @@ def _setup(subparser):
     serve = subs.add_parser("serve", help="Run the phone link server")
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=8796)
-    subs.add_parser("selftest", help="Open one voice session and save a spoken reply (no phone needed)")
+    st = subs.add_parser("selftest", help="Open one voice session and save a spoken reply (no phone needed)")
+    st.add_argument("--voice", help="Voice to use for this test (default: the configured voice)")
+    st.add_argument("--say", help="Have the voice say this exact line (handy for comparing voices)")
+    st.add_argument("--out", help="Where to save the WAV (default: the plugin data dir)")
     subs.add_parser("pair", help="Print the pairing link to open on the phone")
     subparser.set_defaults(func=_handle)
 
@@ -29,7 +32,7 @@ def _handle(args):
     if sub == "serve":
         return cs.cli_serve(args.host, args.port)
     if sub == "selftest":
-        return cs.cli_selftest()
+        return cs.cli_selftest(voice=getattr(args, "voice", None), say=getattr(args, "say", None), out=getattr(args, "out", None))
     if sub == "pair":
         return cs.cli_pair()
     print("Usage: hermes vessel <serve|selftest|pair>")

@@ -48,7 +48,7 @@ hermes vessel pair          # prints a QR code and the pairing link
 
 Scan the QR code with the phone's camera (or open the link on the phone): download the app, install it, tap **Pair this phone**, then tap the light.
 
-Settings (environment): `VESSEL_MODEL` (default `gpt-realtime-2.1`), `VESSEL_VOICE` (`cedar`), `VESSEL_TURN_DETECTION` (`server_vad`, or `semantic_vad` if you pause mid-thought), `VESSEL_SILENCE_MS` (`550`), `VESSEL_API_SERVER_URL` (`http://127.0.0.1:6789`).
+Settings (environment): `VESSEL_MODEL` (default `gpt-realtime-2.1`), `VESSEL_VOICE` (`marin`; also `shimmer`, `coral`, `sage`, `cedar`, …), `VESSEL_TURN_DETECTION` (`server_vad`, or `semantic_vad` if you pause mid-thought), `VESSEL_SILENCE_MS` (`550`), `VESSEL_API_SERVER_URL` (`http://127.0.0.1:6789`).
 
 ## The Android app
 
