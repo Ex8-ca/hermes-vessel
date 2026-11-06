@@ -1,5 +1,10 @@
 # Hermes Vessel
 
+[![GitHub stars](https://img.shields.io/github/stars/Ex8-ca/hermes-vessel?style=social)](https://github.com/Ex8-ca/hermes-vessel/stargazers)
+[![Hugging Face model](https://img.shields.io/badge/%F0%9F%A4%97%20model-vessel--handoff--MiniCPM5--2B-yellow)](https://huggingface.co/BurtleLife/vessel-handoff-MiniCPM5-2B)
+
+> ⭐ **If Vessel is useful to you, or you'd like to see where it goes, please [star the repo](https://github.com/Ex8-ca/hermes-vessel/stargazers).** It helps other Hermes users find it.
+
 Give your Hermes Agent a phone as its body. Tap one button on an Android phone and you are in a live voice conversation with your own Hermes — screen off, phone in your pocket, Bluetooth headset in your ear.
 
 - **The voice** runs on OpenAI Realtime (`gpt-realtime-2.1`) through **your ChatGPT sign-in** in Hermes — no API key.
@@ -8,7 +13,7 @@ Give your Hermes Agent a phone as its body. Tap one button on an Android phone a
 
 ![Pairing page, and the app idle, listening, working and speaking](docs/screens.png)
 
-> Status: early build for the Nous Research plugin hackathon (November 2026). Voice and hand-off to Hermes are verified end to end with a simulated phone over a tailnet; real-phone testing is under way. Camera "eyes", proactive speech and an inner life between conversations are next.
+> Status: early build for the Nous Research plugin hackathon (November 2026). Voice, hand-off to Hermes, screenshots and the floating call button are in daily use on a real phone over a tailnet. The private **Local** voice (your own GPU, no OpenAI) works end to end on one 16 GB card and is still being tuned. Camera "eyes", proactive speech and an inner life between conversations are next.
 
 ## How it works
 
