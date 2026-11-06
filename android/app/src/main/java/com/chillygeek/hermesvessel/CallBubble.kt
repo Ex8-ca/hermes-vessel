@@ -33,6 +33,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
@@ -51,12 +52,13 @@ import kotlin.math.sin
  *   as what it draws. The one window that lets touches pass through (the ✕ drop target) is
  *   FLAG_NOT_TOUCHABLE with alpha 0.8, the most Android 12+ allows for pass-through overlays.
  * - Battery: it lives inside TalkService, the call's existing foreground service. No extra service,
- *   no wakelock, no polling; it is removed the moment the call ends. Animations are one-shot (dimming
- *   when idle, the menu fanning out, a short pulse when Hermes asks for the screen) and are skipped
- *   when the user has turned animations off.
+ *   no wakelock, no polling; it is removed the moment the call ends. Animations are short or tied to
+ *   real events (dimming when idle, the menu fanning out, a brief pulse when Hermes asks for the screen,
+ *   a glow that follows Hermes's voice only while audio is actually playing) and are replaced by
+ *   static states when the user has turned animations off.
  * - It hides while Vessel itself is on screen and while a screenshot is being taken, so it is never
  *   in the captured image.
- * - Accessibility: 56dp bubble and 52dp menu buttons, labelled for TalkBack, a live description when
+ * - Accessibility: 64dp bubble target and 52dp menu buttons, labelled for TalkBack, a live description when
  *   Hermes asks for the screen, and every control (including moving and hiding it) is also an
  *   accessibility action on the bubble, so nothing requires dragging or precise timing.
  */
@@ -81,7 +83,9 @@ class CallBubble(private val context: Context) {
   private val main = Handler(Looper.getMainLooper())
   private val density = context.resources.displayMetrics.density
   private fun dp(v: Int) = (v * density).roundToInt()
-  private val size = dp(56)
+  /** The window (and touch target) is a little larger than the light, so it can swell while Hermes talks without clipping. */
+  private val size = dp(64)
+  private val light = dp(56)
   private val margin = dp(8)
   private val radius = dp(100) // menu buttons sit on this arc around the bubble's centre
   private val button = dp(52)
@@ -93,6 +97,8 @@ class CallBubble(private val context: Context) {
   private var bubble: FrameLayout? = null
   private var params: WindowManager.LayoutParams? = null
   private var badge: View? = null
+  private var lightBox: View? = null
+  private var halo: View? = null
   private var muteIcon: ImageView? = null
   private var menu: View? = null
   private var menuKey: Any? = null
@@ -111,6 +117,16 @@ class CallBubble(private val context: Context) {
     scope.launch { TalkState.appVisible.collect { if (it) dismissed.value = false } }
     scope.launch {
       combine(ScreenRequests.pending, TalkState.muted) { _, _ -> }.collect { refresh() }
+    }
+    // Hermes talking: TalkState.playing is true only while queued audio is due out of the speaker,
+    // so the light never moves ahead of the voice. collectLatest drops the level feed the moment it flips false.
+    scope.launch {
+      TalkState.playing.collectLatest { playing ->
+        if (playing) {
+          speaking(true)
+          TalkState.outLevel.collect { speakLevel(it) }
+        } else speaking(false)
+      }
     }
   }
 
@@ -139,27 +155,43 @@ class CallBubble(private val context: Context) {
     addTarget()
     val (w, h) = screen()
     val frame = FrameLayout(context)
-    frame.addView(View(context).apply {
+    // A soft gold halo behind the light, only visible while Hermes is talking.
+    halo = View(context).apply {
       background = GradientDrawable().apply {
         shape = GradientDrawable.OVAL
         gradientType = GradientDrawable.RADIAL_GRADIENT
-        gradientRadius = size * 0.62f
+        gradientRadius = size / 2f
+        // Solid under the light, then a soft falloff in the 4dp ring that shows around it.
+        colors = intArrayOf(0xFFF6CD84.toInt(), 0xFFF6CD84.toInt(), 0xFFF6CD84.toInt(), 0xB3F6CD84.toInt(), 0x00E9AE5B)
+      }
+      alpha = 0f
+      importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+    }
+    frame.addView(halo, FrameLayout.LayoutParams(size, size, Gravity.CENTER))
+    val box = FrameLayout(context).apply { importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO }
+    box.addView(View(context).apply {
+      background = GradientDrawable().apply {
+        shape = GradientDrawable.OVAL
+        gradientType = GradientDrawable.RADIAL_GRADIENT
+        gradientRadius = light * 0.62f
         setGradientCenter(0.44f, 0.40f)
         colors = intArrayOf(0xFFFDF0D4.toInt(), 0xFFF6CD84.toInt(), 0xFFE9AE5B.toInt(), 0xFFD18F45.toInt())
         setStroke(dp(2), 0x8C0D0B09.toInt()) // A dark ring keeps it visible on light screens.
       }
-    }, FrameLayout.LayoutParams(size, size))
+    }, FrameLayout.LayoutParams(light, light))
     muteIcon = ImageView(context).apply {
       setImageResource(R.drawable.ic_mic_off)
       setColorFilter(0xFF0D0B09.toInt())
       importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
     }
-    frame.addView(muteIcon, FrameLayout.LayoutParams(dp(26), dp(26), Gravity.CENTER))
+    box.addView(muteIcon, FrameLayout.LayoutParams(dp(26), dp(26), Gravity.CENTER))
     badge = View(context).apply {
       background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(0xFFF07A6E.toInt()); setStroke(dp(2), 0xFF0D0B09.toInt()) }
       importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
     }
-    frame.addView(badge, FrameLayout.LayoutParams(dp(16), dp(16), Gravity.TOP or Gravity.END))
+    box.addView(badge, FrameLayout.LayoutParams(dp(16), dp(16), Gravity.TOP or Gravity.END))
+    frame.addView(box, FrameLayout.LayoutParams(light, light, Gravity.CENTER))
+    lightBox = box
     frame.isClickable = true
     frame.isFocusable = true
     frame.setOnClickListener { toggleMenu() }
@@ -186,6 +218,7 @@ class CallBubble(private val context: Context) {
     params = p
     refresh()
     scheduleDim()
+    if (TalkState.playing.value) speaking(true) // Shown mid-sentence: catch up with the voice.
   }
 
   private fun hide() {
@@ -197,6 +230,8 @@ class CallBubble(private val context: Context) {
     bubble?.let { runCatching { wm.removeViewImmediate(it) } }
     bubble = null
     params = null
+    lightBox = null
+    halo = null
   }
 
   private fun hermesWaiting() = ScreenRequests.pending.value?.let { !it.fromUser } == true
@@ -210,7 +245,7 @@ class CallBubble(private val context: Context) {
 
   private fun setDimmed(dimmed: Boolean) {
     val frame = bubble ?: return
-    val to = if (dimmed && menu == null && !hermesWaiting()) 0.5f else 1f
+    val to = if (dimmed && menu == null && !hermesWaiting() && !TalkState.playing.value) 0.5f else 1f
     if (ValueAnimator.areAnimatorsEnabled()) frame.animate().alpha(to).setDuration(250).start() else frame.alpha = to
   }
 
@@ -229,7 +264,7 @@ class CallBubble(private val context: Context) {
       setDimmed(false)
       if (pulse == null && ValueAnimator.areAnimatorsEnabled()) {
         pulse = ObjectAnimator.ofPropertyValuesHolder(
-          frame, PropertyValuesHolder.ofFloat(View.SCALE_X, 1f, 1.12f), PropertyValuesHolder.ofFloat(View.SCALE_Y, 1f, 1.12f),
+          lightBox ?: frame, PropertyValuesHolder.ofFloat(View.SCALE_X, 1f, 1.12f), PropertyValuesHolder.ofFloat(View.SCALE_Y, 1f, 1.12f),
         ).apply {
           duration = 700
           repeatMode = ValueAnimator.REVERSE
@@ -240,8 +275,7 @@ class CallBubble(private val context: Context) {
     } else {
       pulse?.cancel()
       pulse = null
-      frame.scaleX = 1f
-      frame.scaleY = 1f
+      lightBox?.let { it.scaleX = 1f; it.scaleY = 1f }
     }
     // Every control is also an accessibility action, so nothing needs a drag or the menu.
     actionIds.forEach { ViewCompat.removeAccessibilityAction(frame, it) }
@@ -258,6 +292,51 @@ class CallBubble(private val context: Context) {
     action("Hide for now") { dismissed.value = true }
     action("End call") { endCall() }
     if (menu != null && menuKey != contentKey()) { closeMenu(); openMenu() } // Keep an open menu in step.
+  }
+
+  // ------------------------------------------------------------------ talking
+
+  /**
+   * Start or stop the talking glow. With animations removed in system settings there is no motion at all:
+   * the halo just shows, steady, while audio plays, and disappears when it stops.
+   */
+  private fun speaking(on: Boolean) {
+    val box = lightBox ?: return
+    val glow = halo ?: return
+    val animate = ValueAnimator.areAnimatorsEnabled()
+    if (on) {
+      main.removeCallbacks(dim)
+      setDimmed(false)
+      if (animate) {
+        // A small swell on the first word; the output level takes over from here.
+        if (pulse == null) box.animate().scaleX(1.06f).scaleY(1.06f).setDuration(120).start()
+        glow.animate().alpha(0.35f).setDuration(120).start()
+      } else glow.alpha = 0.35f
+    } else {
+      box.animate().cancel()
+      glow.animate().cancel()
+      if (animate) {
+        if (pulse == null) box.animate().scaleX(1f).scaleY(1f).setDuration(120).start()
+        glow.animate().alpha(0f).setDuration(120).start()
+      } else {
+        if (pulse == null) { box.scaleX = 1f; box.scaleY = 1f }
+        glow.alpha = 0f
+      }
+      if (bubble != null) scheduleDim()
+    }
+  }
+
+  /** Louder speech, slightly bigger and brighter. Stays within the window (max 1.11 of 64/56 = 1.14 room). */
+  private fun speakLevel(level: Float) {
+    if (!TalkState.playing.value || !ValueAnimator.areAnimatorsEnabled()) return
+    val box = lightBox ?: return
+    val glow = halo ?: return
+    val l = level.coerceIn(0f, 1f)
+    if (pulse == null) {
+      val scale = 1.03f + 0.08f * l
+      box.animate().scaleX(scale).scaleY(scale).setDuration(110).start()
+    }
+    glow.animate().alpha(0.18f + 0.32f * l).setDuration(110).start()
   }
 
   private inner class Dragger : View.OnTouchListener {

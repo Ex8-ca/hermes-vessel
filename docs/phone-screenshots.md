@@ -12,12 +12,15 @@ The Android prompt may say “recording or casting”; Vessel requests no playba
 
 Settings → Phone access → **Floating call button**, off by default. Turning it on opens Android's "Display over other apps" page; the button appears only after you grant it there.
 
+On Android 13+ a sideloaded install (not from the Play Store) is refused with "Restricted setting" / "App access denied". Open App info → ⋮ → **Allow restricted settings**, confirm, then grant the permission again. Vessel's Settings shows these steps and an Open App info button while the permission is missing. With Advanced Protection on, Android blocks it for sideloaded apps entirely.
+
 - **When it shows:** only during a call, only while Vessel is not on screen. It lives inside the call's existing foreground service (no extra service, wakelock or polling) and is removed when the call ends.
 - **What it does:** tap it and four controls fan out: **Show screen** (you choose to share one screenshot; Android's consent prompt still runs every time), **Mute/Unmute**, **Open Vessel**, **End call**. When Hermes asks for a screenshot, the button gets a coral dot and pulses briefly; tapping it opens the review.
 - **Moving and hiding:** drag it anywhere; it snaps to the nearest side edge. Drag it onto the ✕ at the bottom to hide it until you next leave Vessel. It dims after a few seconds alone.
 - **Never in the picture:** it hides from the moment Android's consent prompt opens until the capture finishes, so screenshots never include it.
 - **Overlay rules:** `TYPE_APPLICATION_OVERLAY`, never focusable, every window only as large as what it draws. The ✕ drop target is the only pass-through window and uses `FLAG_NOT_TOUCHABLE` with alpha 0.8, the maximum Android 12+ allows for overlays that let touches through.
-- **Accessibility:** 56dp button and 52dp controls with labels, a live description when Hermes asks for the screen, and every control (including "Move to the other side" and "Hide for now") is also a TalkBack action on the button itself, so nothing requires dragging. Animations are skipped when the system's animations are off.
+- **Talking glow:** while Hermes's voice is actually coming out of the speaker (`TalkState.playing`), the light swells slightly and a soft halo appears, both following the output loudness; they stop the moment playback stops. With system animations removed there is no motion: the halo just shows, steady, while audio plays.
+- **Accessibility:** 64dp button and 52dp controls with labels, a live description when Hermes asks for the screen, and every control (including "Move to the other side" and "Hide for now") is also a TalkBack action on the button itself, so nothing requires dragging. Animations are skipped when the system's animations are off.
 - **User-chosen screenshots** are sent as `{"type": "user_screenshot", "image": ...}`. The plugin checks the image the same way as a requested one, adds it to the conversation as untrusted visual data and lets Hermes answer. They do not depend on the "Hermes may ask" switch: you are the one asking, and Android asks you to confirm.
 
 ## Verification

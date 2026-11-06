@@ -67,6 +67,19 @@ fun CallBubbleSettings() {
   }
   if (on && !granted) {
     TextButton(onClick = ::askPermission) { Text("Allow", color = Gold) }
+    // Android 13+ blocks this permission for apps installed outside an app store ("Restricted setting").
+    if (android.os.Build.VERSION.SDK_INT >= 33) {
+      Text(
+        "Android says \"Restricted setting\" or \"App access denied\"? That's because Vessel wasn't installed from " +
+          "the Play Store. Open App info, tap ⋮ in the top corner, choose Allow restricted settings and confirm, " +
+          "then tap Allow above again. If ⋮ has no such option, Advanced Protection may be on; it blocks this for apps " +
+          "from outside the Play Store.",
+        style = Type.label,
+      )
+      TextButton(onClick = {
+        context.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}")))
+      }) { Text("Open App info", color = Gold) }
+    }
   }
 }
 
