@@ -63,6 +63,14 @@ Scan the QR code with the phone's camera (or open the link on the phone): downlo
 
 Settings (environment): `VESSEL_MODEL` (default `gpt-realtime-2.1`), `VESSEL_VOICE` (the default for phones that haven't picked one: `marin`; also `shimmer`, `coral`, `sage`, `alloy`, `cedar`, `ash`, `ballad`, `echo`, `verse`), `VESSEL_TURN_DETECTION` (`server_vad`, or `semantic_vad` if you pause mid-thought), `VESSEL_SILENCE_MS` (`550`), `VESSEL_API_SERVER_URL` (`http://127.0.0.1:6789`).
 
+## Local voice (optional, private)
+
+Pick **Local** in the app's voice list to keep the whole conversation on your own machines: MiniCPM-o 4.5 listens
+and talks (you can cut in), Whisper turns your words into text, and a small model fine-tuned for this decision
+(MiniCPM5-2B, 0.1 s, 57/57 held-out tool requests) hands anything that needs tools to Hermes, whose answer the
+voice then says. Setup: [`tools/local_voice/README.md`](tools/local_voice/README.md); how it was trained and
+measured: [`docs/local-voice.md`](docs/local-voice.md).
+
 ## The Android app
 
 One light, one tap. The light breathes while Hermes is idle, turns jade and swells with your voice while it listens, gathers orbiting sparks while Hermes works on something (with a timer, so silence never feels dead), and glows gold as it speaks. Hermes's words appear as live captions in its own typeface; tap the light to interrupt. Calls work like phone calls (Mute, End, a notification with End call), keep running with the screen off, and use a connected headset automatically. A chip shows whether your Hermes is reachable before you tap, and pairing is one tap from a link or QR code (or paste the link). Settings has your Hermes gateways (switch, add, remove) and the voice picker (with samples).
@@ -74,6 +82,9 @@ The call runs in a foreground service (type `microphone`) with Android's voice-c
 ## What it does on your machine (disclosure)
 
 - **Floating call button (optional, off by default):** if you turn it on and grant Android's "Display over other apps", a small button floats over other apps during a call (never outside one). It can show Hermes one screenshot you choose, with Android's consent prompt each time. See [docs/phone-screenshots.md](docs/phone-screenshots.md).
+- **Local voice (only if you set it up):** during a call on the Local voice, microphone audio goes to *your* duplex
+  worker and *your* Whisper server instead of OpenAI; nothing leaves your machines. The worker is a separate
+  program you start; the plugin never downloads or runs model code itself.
 - **Microphone:** while a call is active the phone streams microphone audio to the plugin server, which forwards it to OpenAI Realtime. Nothing is streamed when no call is active; the call shows an ongoing notification with a Hang up button.
 - **The app download:** the pairing page sends the phone to this repo's GitHub release for the installed plugin version (`releases/download/v<version>/hermes-vessel.apk`). The plugin itself never downloads or runs a binary.
 - **Background server:** `hermes vessel serve` listens on `127.0.0.1:8796`. Expose it only on your private network (for example `tailscale serve`, not Funnel).

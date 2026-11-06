@@ -193,9 +193,44 @@ VOICE_IDS = {v["id"] for v in VOICES}
 SAMPLE_LINE = "Hi, it's Hermes. This is how I'd sound when we talk."
 
 
+LOCAL_VOICE = {"id": "local", "name": "Local", "note": "Private, runs on your own GPU", "tone": "self-hosted"}
+
+
+def _local():
+    """local_engine.py from this plugin's folder. Hermes loads plugin modules by file path, so neither a relative nor
+    a top-level import finds a sibling; load it the same way and hand it this module."""
+    import importlib.util
+    import sys
+
+    mod = sys.modules.get("vessel_local_engine")
+    if mod is None:
+        spec = importlib.util.spec_from_file_location("vessel_local_engine", Path(__file__).with_name("local_engine.py"))
+        assert spec is not None and spec.loader is not None
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules["vessel_local_engine"] = mod
+        try:
+            spec.loader.exec_module(mod)
+        except Exception:
+            sys.modules.pop("vessel_local_engine", None)  # don't cache a half-loaded module
+            raise
+        mod._VS = sys.modules[__name__]  # after loading: the module body resets _VS to None
+    return mod
+
+
+def voices_offered() -> list:
+    """The OpenAI voices, plus the local engine when one is configured."""
+    try:
+        return VOICES + ([LOCAL_VOICE] if _local().available() else [])
+    except Exception as exc:  # noqa: BLE001 - a broken local config must not hide the normal voices
+        log.warning("local voice unavailable: %s: %s", type(exc).__name__, exc)
+        return VOICES
+
+
 def normalize_voice(value: Optional[str]) -> Optional[str]:
     """A known voice id, or None (use the configured default)."""
     v = (value or "").strip().lower()
+    if v == "local":
+        return v if voices_offered()[-1] is LOCAL_VOICE else None
     return v if v in VOICE_IDS else None
 
 
@@ -803,7 +838,7 @@ def make_app():
     async def voices(request):
         if not authorized(request):
             return web.Response(status=403)
-        return web.json_response({"default": VOICE, "voices": VOICES})
+        return web.json_response({"default": VOICE, "voices": voices_offered()})
 
     sample_locks: dict = {}
 
@@ -815,6 +850,8 @@ def make_app():
         if voice is None:
             return web.Response(status=404, text="Unknown voice")
         path = _data_dir() / "voices" / f"{voice}.wav"
+        if voice == "local" and not path.is_file():
+            return web.Response(status=404, text="No sample recorded for the local voice yet.")
         async with sample_locks.setdefault(voice, asyncio.Lock()):
             if not path.is_file():
                 try:
@@ -834,7 +871,10 @@ def make_app():
         ws = web.WebSocketResponse(heartbeat=20.0, max_msg_size=8 * 1024 * 1024)
         await ws.prepare(request)
         log.info("phone connected from %s", request.headers.get("X-Forwarded-For") or request.remote)
-        await PhoneSession(ws, voice).run()
+        if voice == "local":
+            await _local().LocalSession(ws).run()
+        else:
+            await PhoneSession(ws, voice).run()
         await ws.close()
         return ws
 
