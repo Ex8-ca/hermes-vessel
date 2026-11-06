@@ -68,8 +68,10 @@ Settings (environment): `VESSEL_MODEL` (default `gpt-realtime-2.1`), `VESSEL_VOI
 Pick **Local** in the app's voice list to keep the whole conversation on your own machines: MiniCPM-o 4.5 listens
 and talks (you can cut in), Whisper turns your words into text, and a small model fine-tuned for this decision
 (MiniCPM5-2B, 0.1 s, 57/57 held-out tool requests) hands anything that needs tools to Hermes, whose answer the
-voice then says. Setup: [`tools/local_voice/README.md`](tools/local_voice/README.md); how it was trained and
-measured: [`docs/local-voice.md`](docs/local-voice.md).
+voice then says. Screenshots go to Hermes too. It all fits on one 16 GB NVIDIA card; `tools/local_voice/install.sh`
+sets it up and `hermes vessel local` connects it. Setup: [`tools/local_voice/README.md`](tools/local_voice/README.md);
+the model: [burtlelife/vessel-handoff-MiniCPM5-2B](https://huggingface.co/burtlelife/vessel-handoff-MiniCPM5-2B);
+how it was built and measured: [`docs/local-voice.md`](docs/local-voice.md).
 
 ## The Android app
 
@@ -84,7 +86,9 @@ The call runs in a foreground service (type `microphone`) with Android's voice-c
 - **Floating call button (optional, off by default):** if you turn it on and grant Android's "Display over other apps", a small button floats over other apps during a call (never outside one). It can show Hermes one screenshot you choose, with Android's consent prompt each time. See [docs/phone-screenshots.md](docs/phone-screenshots.md).
 - **Local voice (only if you set it up):** during a call on the Local voice, microphone audio goes to *your* duplex
   worker and *your* Whisper server instead of OpenAI; nothing leaves your machines. The worker is a separate
-  program you start; the plugin never downloads or runs model code itself.
+  program you start; the plugin never downloads or runs model code itself. `install.sh` downloads pinned model
+  revisions and a checksum-verified llama.cpp build once, at install time. Approved screenshots on the Local voice
+  go to your Hermes (`/v1/runs`). A broken Local setup ends the call; it never falls back to OpenAI.
 - **Microphone:** while a call is active the phone streams microphone audio to the plugin server, which forwards it to OpenAI Realtime. Nothing is streamed when no call is active; the call shows an ongoing notification with a Hang up button.
 - **The app download:** the pairing page sends the phone to this repo's GitHub release for the installed plugin version (`releases/download/v<version>/hermes-vessel.apk`). The plugin itself never downloads or runs a binary.
 - **Background server:** `hermes vessel serve` listens on `127.0.0.1:8796`. Expose it only on your private network (for example `tailscale serve`, not Funnel).

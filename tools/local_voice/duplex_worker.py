@@ -31,18 +31,46 @@ from aiohttp import WSMsgType, web
 
 log = logging.getLogger("duplex")
 SR_IN, SR_OUT = 16000, 24000
+# 25 speech tokens per second: up to 8 s to finish a reply's last words (0 turns the fix off, for comparison)
+FINAL_SPEECH_TOKENS = int(os.environ.get("DUPLEX_FINAL_SPEECH_TOKENS", "200"))
+# Up to this many speech tokens per normal step (the model's own is exactly 26 = ~1 s); 0 = the model's default
+STEP_SPEECH_TOKENS = 0  # tried 40 (up to 1.6 s per step): no fewer cut endings, more babble, and slower
+# Speech tokens per text token, to work out what the last step still owes (measured on this model: see log lines
+# "turn speech: ..." from replies that ended naturally)
+# 12 replies on MiniCPM-o 4.5 (NF4): complete ones 6.6-7.8, the one that lost its ending 5.7. 6.5 only pushes a
+# reply that is clearly behind. 0 = just let the last step run until the model's own end-of-speech.
+SPEECH_PER_TEXT_TOKEN = float(os.environ.get("DUPLEX_SPEECH_PER_TEXT_TOKEN", "6.5"))
 NUDGE_CHUNKS, NUDGE_SCALE, RETRY_AFTER = 3, 0.5, 3
 
 
 class Duplex:
-    def __init__(self, model_dir: str):
+    def __init__(self, model_dir: str, quant: str = "none", max_gpu_gib: float = 0.0):
         import torch
         from transformers import AutoModel
 
+        if max_gpu_gib:
+            # PyTorch keeps freed memory cached; on a shared card that starves Whisper. Cap what this process may hold.
+            total = torch.cuda.get_device_properties(0).total_memory
+            torch.cuda.set_per_process_memory_fraction(min(1.0, max_gpu_gib * 2**30 / total))
+
         t = time.time()
+        kw: dict = {}
+        if quant in ("nf4", "nf4-all"):
+            # 4-bit only for the language model (Qwen3-8B, most of the weights). Hearing (apm), speech (tts) and the
+            # projections stay bf16: they are small and decide how it sounds.
+            from transformers import BitsAndBytesConfig
+
+            kw = {"device_map": "cuda", "quantization_config": BitsAndBytesConfig(
+                load_in_4bit=True, bnb_4bit_quant_type="nf4", bnb_4bit_compute_dtype=torch.bfloat16,
+                bnb_4bit_use_double_quant=True,
+                llm_int8_skip_modules=["apm", "tts", "audio_projection_layer", "audio_avg_pooler", "vpm",
+                                       "resampler"] + (["lm_head"] if quant == "nf4" else []))}
         model = AutoModel.from_pretrained(model_dir, trust_remote_code=True, attn_implementation="sdpa",
-                                          torch_dtype=torch.bfloat16, init_vision=False, local_files_only=True)
-        self.duplex = model.eval().cuda().as_duplex()
+                                          torch_dtype=torch.bfloat16, init_vision=False, local_files_only=True, **kw)
+        model = model.eval() if quant != "none" else model.eval().cuda()
+        self.duplex = model.as_duplex()
+        self._finish_speech_at_end_of_turn()
+        log.info("GPU memory after load: %.1f GiB (quant=%s)", torch.cuda.memory_allocated() / 2**30, quant)
         self.model_dir = Path(model_dir)
         log.info("model loaded in %.1fs", time.time() - t)
 
@@ -58,16 +86,21 @@ class Duplex:
         ref_audio, _ = librosa.load(self.ref, sr=SR_IN, mono=True)
         self.duplex.prepare(prefix_system_prompt=system, ref_audio=ref_audio, prompt_wav_path=self.ref)
         self.pending, self.last_inject, self.nudge, self.retries, self.spoke_since = None, None, 0, 0, True
+        self.spoken = 0
+        self.costs: list = []
 
     def inject(self, text: str, retry: bool = True):
-        self.pending = "<|im_start|>system\n" + text.strip() + "<|im_end|>"
-        self.last_inject, self.retries = (self.pending if retry else None), 0
+        turn = "<|im_start|>system\n" + text.strip() + "<|im_end|>"
+        # Queue, don't replace: a hint arriving right after a RESULT must not erase the RESULT.
+        self.pending = (self.pending or "") + turn
+        if retry:  # only results are re-sent if the voice stays quiet; hints never displace them
+            self.last_inject, self.retries = turn, 0
 
     def step(self, chunk: np.ndarray) -> dict:
         t = time.time()
         if self.pending:
             self.duplex.streaming_prefill(audio_waveform=chunk, text_list=[self.pending])
-            self.pending, self.nudge, self.spoke_since = None, NUDGE_CHUNKS, False
+            self.pending, self.nudge, self.spoke_since, self.spoken = None, NUDGE_CHUNKS, False, 0
         else:
             self.duplex.streaming_prefill(audio_waveform=chunk)
         r = self.duplex.streaming_generate(prompt_wav_path=self.ref, max_new_speak_tokens_per_chunk=20,
@@ -76,6 +109,11 @@ class Duplex:
         listen = bool(r.get("is_listen"))
         if not listen and (r.get("text") or "").strip():
             self.spoke_since = True
+            self.spoken += 1
+            if self.spoken >= 2:
+                # It has been talking since the last result arrived: that result is delivered. Never re-send it
+                # later (a hint for the NEXT question once made it repeat the previous answer).
+                self.last_inject = None
         if self.nudge > 0:
             self.nudge -= 1
             # Silent through the whole nudge window: hand the result over once more.
@@ -85,8 +123,75 @@ class Duplex:
         audio = None
         if not listen and r.get("audio_waveform") is not None:
             audio = (np.clip(np.asarray(r["audio_waveform"], dtype=np.float32), -1, 1) * 32767).astype("<i2").tobytes()
+        cost = round(time.time() - t, 3)
+        self.costs.append(cost)
         return {"listen": listen, "text": r.get("text") or "", "eot": bool(r.get("end_of_turn")),
-                "cost": round(time.time() - t, 3), "audio": audio}
+                "cost": cost, "audio": audio}
+
+    def _finish_speech_at_end_of_turn(self) -> None:
+        """MiniCPM-o's speech lags its text: each 1 s step writes up to 20 text tokens but voices exactly ~1 s
+        (26 speech tokens). At the end of a turn it makes one last capped step and resets, so whatever it hasn't voiced
+        yet (often the last word or two, sometimes a sentence) is dropped; it also tends to stop at the end-of-text
+        even when behind. So on that last step: allow up to FINAL_SPEECH_TOKENS, and if the reply is clearly behind
+        (fewer than SPEECH_PER_TEXT_TOKEN speech tokens per text token so far), require most of what it owes.
+        Not on a one-step reply: there it has no backlog, and given room it babbles."""
+        d = self.duplex
+        tts = getattr(getattr(d, "model", None), "tts", None)
+        if FINAL_SPEECH_TOKENS <= 0:
+            log.info("end-of-turn speech fix is off")
+            return
+        if tts is None or not hasattr(tts, "generate_chunk") or not hasattr(d, "current_turn_ended"):
+            log.warning("could not patch end-of-turn speech (model code changed?); replies may lose their last words")
+            return
+        generate = tts.generate_chunk
+        convert = d._convert_results_to_tts_input
+        turn = {"text": 0, "speech": 0, "steps": 0}
+
+        def convert_and_count(results):
+            turn["text"] += len(results)  # text tokens this step (the TTS is conditioned on each)
+            return convert(results)
+
+        def generate_rest(*args, **kwargs):
+            start = int(kwargs.get("text_start_pos") or 0) == 0
+            if start:
+                turn["speech"], turn["steps"] = 0, 0
+                turn["text"] = turn.get("pending", 0)
+            last = bool(d.current_turn_ended) and not start
+            owed = 0
+            if last:
+                # It tends to stop at the end-of-text even when it hasn't voiced it all: make it voice what it owes.
+                if SPEECH_PER_TEXT_TOKEN > 0:
+                    owed = int(SPEECH_PER_TEXT_TOKEN * turn["text"]) - turn["speech"]
+                    kwargs["min_new_tokens"] = max(0, min(int(owed * 0.85), FINAL_SPEECH_TOKENS - 50))
+                    kwargs["max_new_token"] = max(26, min(FINAL_SPEECH_TOKENS, kwargs["min_new_tokens"] + 50))
+                else:
+                    kwargs["max_new_token"] = max(int(kwargs.get("max_new_token") or 0), FINAL_SPEECH_TOKENS)
+            tokens, kv = generate(*args, **kwargs)
+            turn["speech"] += int(tokens.shape[1])
+            turn["steps"] += 1
+            if last or start and d.current_turn_ended:
+                log.info("turn speech: %d text tokens, %d speech tokens in %d steps (%.1f per text token)%s",
+                         turn["text"], turn["speech"], turn["steps"], turn["speech"] / max(1, turn["text"]),
+                         f"; last step owed {owed}, made {int(tokens.shape[1])}" if last else "")
+            return tokens, kv
+
+        # convert runs before generate in each step; count the step's text first, then generate uses it
+        def convert_hook(results):
+            if int(getattr(d, "tts_text_start_pos", 1) or 0) == 0:
+                turn["pending"] = len(results)
+                return convert(results)
+            return convert_and_count(results)
+
+        d._convert_results_to_tts_input = convert_hook
+        tts.generate_chunk = generate_rest
+
+    def stats(self) -> str:
+        import torch
+
+        c = sorted(self.costs) or [0.0]
+        late = sum(1 for x in c if x > 1.0)
+        return (f"{len(c)} chunks, per 1 s of audio: median {c[len(c) // 2]:.2f}s, p95 {c[int(len(c) * 0.95)]:.2f}s, "
+                f"max {c[-1]:.2f}s, slower than real time {late}; peak GPU {torch.cuda.max_memory_allocated() / 2**30:.1f} GiB")
 
 
 def make_app(duplex: Duplex, token: str) -> web.Application:
@@ -134,6 +239,11 @@ def make_app(duplex: Duplex, token: str) -> web.Application:
                 log.exception("session failed")
                 if not ws.closed:
                     await ws.send_json({"type": "error", "message": str(exc)[:300]})
+            if started:
+                log.info("session done: %s", duplex.stats())
+                import torch
+
+                torch.cuda.empty_cache()
         return ws
 
     app = web.Application()
@@ -148,13 +258,18 @@ def main():
     ap.add_argument("--host", default="0.0.0.0")
     ap.add_argument("--port", type=int, default=8797)
     ap.add_argument("--token-file", default=os.path.expanduser("~/minicpm-o/worker_token"))
+    ap.add_argument("--quant", choices=["none", "nf4", "nf4-all"], default="none",
+                    help="nf4: 4-bit language model (bitsandbytes), for 16 GB cards; nf4-all also quantizes the output "
+                         "layer (0.9 GB less, but slower than real time on an RTX 5080)")
+    ap.add_argument("--max-gpu-gib", type=float, default=0.0,
+                    help="cap this process's GPU memory so Whisper can share the card (13 on a 16 GB card)")
     args = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     tf = Path(args.token_file)
     if not tf.exists():
         tf.write_text(secrets.token_urlsafe(24))
         tf.chmod(0o600)
-    web.run_app(make_app(Duplex(args.model), tf.read_text().strip()), host=args.host, port=args.port, print=None)
+    web.run_app(make_app(Duplex(args.model, args.quant, args.max_gpu_gib), tf.read_text().strip()), host=args.host, port=args.port, print=None)
 
 
 if __name__ == "__main__":

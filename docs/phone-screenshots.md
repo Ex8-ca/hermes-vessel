@@ -23,6 +23,14 @@ On Android 13+ a sideloaded install (not from the Play Store) is refused with "R
 - **Accessibility:** 64dp button and 52dp controls with labels, a live description when Hermes asks for the screen, and every control (including "Move to the other side" and "Hide for now") is also a TalkBack action on the button itself, so nothing requires dragging. Animations are skipped when the system's animations are off.
 - **User-chosen screenshots** are sent as `{"type": "user_screenshot", "image": ...}`. The plugin checks the image the same way as a requested one, adds it to the conversation as untrusted visual data and lets Hermes answer. They do not depend on the "Hermes may ask" switch: you are the one asking, and Android asks you to confirm.
 
+## On the Local voice
+
+The local voice model can't see images and can't ask for a screenshot itself, so the plugin does both on its
+behalf: "Show screen" on the call button, or asking about your screen out loud, sends one approved screenshot to
+Hermes over the gateway's documented `/v1/runs` endpoint (an `input_image` part, the same JPEG data URL limits as
+above). The phone still asks for approval every time. The image stays inside your Hermes conversation for that call,
+so follow-up questions can refer to it. Hermes' exact answer is left on screen after the voice reads it.
+
 ## Verification
 
 - `JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 ./gradlew --no-daemon assembleDebug lintDebug` passes (lint warnings remain).

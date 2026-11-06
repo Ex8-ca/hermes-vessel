@@ -29,6 +29,7 @@ def load24(path):
 async def main():
     t0 = time.monotonic()
     got = bytearray()
+    replies: list = []  # [arrival time of last audio, bytearray] per reply (audio arriving >2.5 s after the last)
     log = []
 
     def note(kind, text=""):
@@ -44,6 +45,11 @@ async def main():
                         if not got:
                             note("first audio")
                         got.extend(msg.data)
+                        now = time.monotonic()
+                        if not replies or now - replies[-1][0] > 2.5:
+                            replies.append([now, bytearray()])
+                        replies[-1][0] = now
+                        replies[-1][1].extend(msg.data)
                     elif msg.type == aiohttp.WSMsgType.TEXT:
                         d = json.loads(msg.data)
                         if d["type"] == "caption":
@@ -66,10 +72,14 @@ async def main():
             await ws.send_str(json.dumps({"type": "stop"}))
             await asyncio.sleep(0.5)
             rd.cancel()
-    out = Path("/home/marc/.hermes/cache/scratch/minicpmo/call_test_out.wav")
+    out = Path(os.environ.get("OUT_DIR", ".")) / "call_test_out.wav"
     with wave.open(str(out), "wb") as w:
         w.setnchannels(1); w.setsampwidth(2); w.setframerate(24000); w.writeframes(bytes(got))
     print(f"\nreceived {len(got) / 48000:.1f}s of voice -> {out}")
+    for i, (_, pcm) in enumerate(replies, 1):  # one file per reply, to check each one's ending
+        with wave.open(str(out.with_name(f"call_test_reply_{i}.wav")), "wb") as w:
+            w.setnchannels(1); w.setsampwidth(2); w.setframerate(24000); w.writeframes(bytes(pcm))
+    print(f"{len(replies)} replies -> {out.with_name('call_test_reply_N.wav')}")
 
 
 asyncio.run(main())

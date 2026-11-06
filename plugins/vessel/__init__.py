@@ -19,6 +19,12 @@ def _setup(subparser):
     st.add_argument("--say", help="Have the voice say this exact line (handy for comparing voices)")
     st.add_argument("--out", help="Where to save the WAV (default: the plugin data dir)")
     subs.add_parser("pair", help="Print the pairing link to open on the phone")
+    lo = subs.add_parser("local", help="Connect (or check, or turn off) the private Local voice on your own GPU")
+    lo.add_argument("--url", help="the duplex worker, e.g. ws://gpu-box:8797/ws (printed by install.sh)")
+    lo.add_argument("--token-file", help="file holding the worker's token (from install.sh); asked for if omitted")
+    lo.add_argument("--stt", help="speech-to-text URL (default: same host, port 8798)")
+    lo.add_argument("--router", help="hand-off model URL (default: same host, port 8799)")
+    lo.add_argument("--off", action="store_true", help="remove the Local voice from this server")
     subparser.set_defaults(func=_handle)
 
 
@@ -35,7 +41,9 @@ def _handle(args):
         return cs.cli_selftest(voice=getattr(args, "voice", None), say=getattr(args, "say", None), out=getattr(args, "out", None))
     if sub == "pair":
         return cs.cli_pair()
-    print("Usage: hermes vessel <serve|selftest|pair>")
+    if sub == "local":
+        return cs.cli_local(url=args.url, token_file=args.token_file, stt=args.stt, router=args.router, off=args.off)
+    print("Usage: hermes vessel <serve|selftest|pair|local>")
     return 2
 
 

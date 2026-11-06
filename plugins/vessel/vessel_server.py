@@ -359,10 +359,11 @@ class HermesBridge:
     def __init__(self) -> None:
         self.session_id: Optional[str] = None
 
-    async def ask(self, request: str) -> str:
-        return await asyncio.to_thread(self._ask_sync, request)
+    async def ask(self, request: str, image: Optional[str] = None) -> str:
+        """`image`: an optional JPEG data URL (one approved phone screenshot) sent with the request."""
+        return await asyncio.to_thread(self._ask_sync, request, image)
 
-    def _ask_sync(self, request: str) -> str:
+    def _ask_sync(self, request: str, image: Optional[str] = None) -> str:
         import httpx
 
         headers = {"Content-Type": "application/json", "X-Hermes-Session-Key": "vessel"}
@@ -370,6 +371,11 @@ class HermesBridge:
         if key:
             headers["Authorization"] = f"Bearer {key}"
         body: dict = {"input": request}
+        if image:
+            body["input"] = [{"role": "user", "content": [
+                {"type": "input_text", "text": request},
+                {"type": "input_image", "image_url": image},
+            ]}]
         if self.session_id:
             body["session_id"] = self.session_id
         try:
@@ -867,10 +873,19 @@ def make_app():
     async def ws_handler(request):
         if not authorized(request):
             return web.Response(status=403)
-        voice = normalize_voice(request.query.get("voice"))
+        asked = (request.query.get("voice") or "").strip().lower()
+        voice = normalize_voice(asked)
         ws = web.WebSocketResponse(heartbeat=20.0, max_msg_size=8 * 1024 * 1024)
         await ws.prepare(request)
         log.info("phone connected from %s", request.headers.get("X-Forwarded-For") or request.remote)
+        if asked == "local" and voice != "local":
+            # Someone who picked Local picked privacy: never quietly send their voice to OpenAI instead.
+            log.warning("local voice requested but unavailable; refusing the call rather than using OpenAI")
+            await ws.send_json({"type": "error",  # the app shows "error" messages; it keeps this one after the close
+                                "message": "The local voice isn't available on this server right now. "
+                                           "Pick another voice in Settings, or check the local voice setup."})
+            await ws.close()
+            return ws
         if voice == "local":
             await _local().LocalSession(ws).run()
         else:
@@ -928,6 +943,76 @@ def _print_qr(url: str) -> bool:
     qr.make(fit=True)
     qr.print_ascii(invert=True)
     return True
+
+
+def cli_local(url: Optional[str] = None, token_file: Optional[str] = None, stt: Optional[str] = None,
+              router: Optional[str] = None, off: bool = False) -> int:
+    """`hermes vessel local`: write <plugin data>/local.json + the worker token, then check all three servers."""
+    import getpass
+    import urllib.parse
+
+    import httpx
+
+    data = _data_dir()
+    cfg_path, token_path = data / "local.json", data / "local_duplex_token"
+    if off:
+        for p in (cfg_path, token_path):
+            p.unlink(missing_ok=True)
+        print("Local voice removed. Restart the Vessel server (or its service) to drop it from the voice list.")
+        return 0
+    if url:
+        parts = urllib.parse.urlsplit(url)
+        if parts.scheme not in ("ws", "wss") or not parts.hostname:
+            print("--url must look like ws://gpu-box:8797/ws")
+            return 2
+        if token_file:
+            token = Path(token_file).expanduser().read_text().strip()
+        else:
+            token = getpass.getpass("Worker token (from install.sh; not shown): ").strip()
+        if not token:
+            print("A token is required.")
+            return 2
+        http_scheme = "https" if parts.scheme == "wss" else "http"
+        host = parts.hostname if ":" not in parts.hostname else f"[{parts.hostname}]"
+        cfg = {"duplex_url": url,
+               "stt_url": stt or f"{http_scheme}://{host}:8798/v1/audio/transcriptions",
+               "router_url": router or f"{http_scheme}://{host}:8799/v1/chat/completions"}
+        data.mkdir(parents=True, exist_ok=True)
+        cfg_path.write_text(json.dumps(cfg, indent=1) + "\n")
+        token_path.write_text(token + "\n")
+        token_path.chmod(0o600)
+        print(f"Saved {cfg_path} and the token ({token_path}, mode 600).")
+    try:
+        mod = _local()
+        cfg = mod.config()
+    except Exception as exc:  # noqa: BLE001 - reported
+        print(f"The local engine couldn't load: {type(exc).__name__}: {exc}")
+        return 1
+    if not cfg.get("duplex_url"):
+        print("No Local voice set up. Run install.sh on your GPU box, then the command it prints.")
+        return 1
+    headers = {"Authorization": f"Bearer {cfg.get('duplex_token', '')}"} if cfg.get("duplex_token") else {}
+    worker = urllib.parse.urlsplit(cfg["duplex_url"])
+    checks = [
+        ("voice worker", f"{'https' if worker.scheme == 'wss' else 'http'}://{worker.netloc}/health"),
+        ("speech-to-text", cfg["stt_url"].split("/v1/")[0] + "/health"),
+        ("hand-off model", cfg["router_url"].split("/v1/")[0] + "/health"),
+    ]
+    ok = True
+    for name, check in checks:
+        try:
+            r = httpx.get(check, headers=headers, timeout=5)
+            good = r.status_code == 200
+            note = "" if good else f" (HTTP {r.status_code})"
+        except httpx.HTTPError as exc:
+            good, note = False, f" ({type(exc).__name__})"
+        ok = ok and good
+        print(f"  {'ok  ' if good else 'FAIL'} {name}: {check}{note}")
+    if ok:
+        print("Local voice is ready. Restart the Vessel server (or its service); then pick Local in the app's voices.")
+    else:
+        print("Not all parts answered. Check they're running on the GPU box and reachable from here.")
+    return 0 if ok else 1
 
 
 def cli_pair() -> int:
