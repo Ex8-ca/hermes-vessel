@@ -31,6 +31,9 @@ class ScreenConsentActivity : ComponentActivity() {
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
+    // Nothing may float over a consent prompt: hides our own call button and any other app's overlay
+    // (anti-tapjacking), the same way Android protects its own permission dialogs.
+    if (android.os.Build.VERSION.SDK_INT >= 31) window.setHideOverlayWindows(true)
     requestId = intent.getStringExtra("request_id").orEmpty()
     if (!ScreenRequests.valid(this, requestId)) { finish(); return }
     lifecycleScope.launch {
@@ -40,18 +43,23 @@ class ScreenConsentActivity : ComponentActivity() {
     promptLaunched = savedInstanceState?.getBoolean("prompt_launched") ?: false
     if (promptLaunched) return
     val request = ScreenRequests.pending.value!!
-    AlertDialog.Builder(this)
+    // The user asked to show their screen themselves: go straight to Android's own consent prompt.
+    if (request.fromUser) { launchPrompt(); return }
+    AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
       .setTitle("Share one screenshot with Hermes?")
       .setMessage("${request.reason}\n\nOne image will be sent to ${Pairing.displayPath(request.gateway)} and its AI provider. Sensitive information visible on screen may be included. Sharing stops immediately after one image. Android will ask you to approve next.")
       .setPositiveButton("Continue") { _, _ ->
-        if (ScreenRequests.valid(this, requestId)) {
-          promptLaunched = true
-          consent.launch(getSystemService(MediaProjectionManager::class.java).createScreenCaptureIntent())
-        } else finish()
+        if (ScreenRequests.valid(this, requestId)) launchPrompt() else finish()
       }
       .setNegativeButton("Not now") { _, _ -> decline() }
       .setOnCancelListener { decline() }
       .show()
+  }
+
+  private fun launchPrompt() {
+    promptLaunched = true
+    ScreenRequests.capturing.value = true
+    consent.launch(getSystemService(MediaProjectionManager::class.java).createScreenCaptureIntent())
   }
 
   override fun onSaveInstanceState(outState: Bundle) {

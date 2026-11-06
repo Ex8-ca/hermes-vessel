@@ -1,6 +1,8 @@
 package com.chillygeek.hermesvessel
 
 import android.content.Intent
+import android.net.Uri
+import android.provider.Settings
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Switch
@@ -29,6 +31,42 @@ fun ScreenPermissionSettings(url: String?) {
       enabled = it
       url?.let { gateway -> ScreenRequests.setAllowed(context, gateway, it) }
     })
+  }
+  CallBubbleSettings()
+}
+
+/** The floating call button: off by default, and it needs Android's "Display over other apps" permission. */
+@Composable
+fun CallBubbleSettings() {
+  val context = LocalContext.current
+  val on by TalkState.bubbleOn.collectAsState()
+  val granted by TalkState.overlayGranted.collectAsState()
+  fun askPermission() = context.startActivity(
+    Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${context.packageName}"))
+  )
+  Spacer(Modifier.height(16.dp))
+  Row(verticalAlignment = Alignment.CenterVertically) {
+    Column(Modifier.weight(1f)) {
+      Text("Floating call button", style = Type.body)
+      Text(
+        when {
+          on && !granted -> "Needs \"Display over other apps\". Tap Allow, then turn on Hermes Vessel."
+          else -> "During a call, a small light floats over other apps. Tap it to show Hermes your screen, mute, or come back here; drag it onto ✕ to hide it. A screen you share goes to this gateway and its AI provider, and Android asks you each time. Gone when the call ends."
+        },
+        style = Type.label,
+      )
+    }
+    Switch(
+      modifier = Modifier.semantics { contentDescription = "Floating call button" },
+      checked = on && granted,
+      onCheckedChange = { want ->
+        CallBubble.setEnabled(context, want)
+        if (want && !CallBubble.permitted(context)) askPermission()
+      },
+    )
+  }
+  if (on && !granted) {
+    TextButton(onClick = ::askPermission) { Text("Allow", color = Gold) }
   }
 }
 

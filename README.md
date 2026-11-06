@@ -73,6 +73,7 @@ The call runs in a foreground service (type `microphone`) with Android's voice-c
 
 ## What it does on your machine (disclosure)
 
+- **Floating call button (optional, off by default):** if you turn it on and grant Android's "Display over other apps", a small button floats over other apps during a call (never outside one). It can show Hermes one screenshot you choose, with Android's consent prompt each time. See [docs/phone-screenshots.md](docs/phone-screenshots.md).
 - **Microphone:** while a call is active the phone streams microphone audio to the plugin server, which forwards it to OpenAI Realtime. Nothing is streamed when no call is active; the call shows an ongoing notification with a Hang up button.
 - **The app download:** the pairing page sends the phone to this repo's GitHub release for the installed plugin version (`releases/download/v<version>/hermes-vessel.apk`). The plugin itself never downloads or runs a binary.
 - **Background server:** `hermes vessel serve` listens on `127.0.0.1:8796`. Expose it only on your private network (for example `tailscale serve`, not Funnel).

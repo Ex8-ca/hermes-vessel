@@ -73,5 +73,20 @@ class ScreenProtocolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(s.device_waiters, {})
         self.assertEqual(s.images, [])
 
+    async def test_user_screenshot_forwarded_and_answered(self):
+        s = self.session()  # Not gated by screen_enabled: the user chose to share, Android asked them.
+        s.oa_calls = []
+        image = 'data:image/jpeg;base64,' + base64.b64encode(b'\xff\xd8\xffuser\xff\xd9').decode()
+        self.assertTrue(await s.share_user_screenshot(image))
+        self.assertEqual(s.images[0]['item']['content'][1]['image_url'], image)
+        self.assertEqual(s.images[-1], {'type': 'response.create'})
+        self.assertEqual(s.sent[-1]['role'], 'user')
+
+    async def test_user_screenshot_rejects_bad_images(self):
+        for image in [None, 'http://external/x.jpg', 'data:image/jpeg;base64,@@', 'data:image/jpeg;base64,YWJj']:
+            s = self.session()
+            self.assertFalse(await s.share_user_screenshot(image))
+            self.assertEqual(s.images, [])
+
 
 if __name__ == '__main__': unittest.main()

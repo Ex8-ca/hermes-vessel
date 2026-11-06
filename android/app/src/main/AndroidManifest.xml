@@ -8,6 +8,10 @@
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
   <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+  <!-- Optional floating call button; the user grants it in system settings, and it shows only during a call. -->
+  <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+  <!-- Lets the screenshot consent prompt hide every overlay (ours included) while it is open. -->
+  <uses-permission android:name="android.permission.HIDE_OVERLAY_WINDOWS" />
   <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
   <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
 
@@ -35,7 +39,15 @@
       </intent-filter>
     </activity>
 
-    <activity android:name=".ScreenConsentActivity" android:exported="false" />
+    <!-- Own empty task + translucent: approving a screenshot from another app returns to THAT app, so it is
+         the screen that gets captured (not Vessel's main window brought forward by the prompt). -->
+    <activity
+      android:name=".ScreenConsentActivity"
+      android:exported="false"
+      android:taskAffinity=""
+      android:excludeFromRecents="true"
+      android:noHistory="false"
+      android:theme="@android:style/Theme.Translucent.NoTitleBar" />
     <service android:name=".ScreenCaptureService" android:exported="false" android:foregroundServiceType="mediaProjection" />
 
     <service

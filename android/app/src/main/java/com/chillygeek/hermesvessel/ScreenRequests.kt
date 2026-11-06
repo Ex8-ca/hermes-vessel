@@ -13,8 +13,11 @@ import org.json.JSONObject
 
 /** In-memory, single-flight requests bound to a particular live call. Never stores consent. */
 object ScreenRequests {
-  data class Request(val id: String, val gateway: String, val reason: String)
+  /** fromUser: the user chose to show the screen (call button), rather than Hermes asking. */
+  data class Request(val id: String, val gateway: String, val reason: String, val fromUser: Boolean = false)
   val pending = MutableStateFlow<Request?>(null)
+  /** True from the system consent prompt until the request ends; the call button hides so it isn't captured. */
+  val capturing = MutableStateFlow(false)
   private val main = Handler(Looper.getMainLooper())
   private var gateway: String? = null
   private var send: ((JSONObject) -> Unit)? = null
@@ -53,7 +56,21 @@ object ScreenRequests {
   fun valid(c: Context, id: String): Boolean {
     val request = pending.value ?: return false
     return request.id == id && request.gateway == gateway && send != null &&
-      TalkState.running.value && allowed(c, request.gateway) && Prefs.url(c) == request.gateway
+      TalkState.running.value && (request.fromUser || allowed(c, request.gateway)) && Prefs.url(c) == request.gateway
+  }
+
+  /**
+   * The user tapped "Show Hermes this screen". Not gated by the "Hermes may ask" switch: the user is
+   * the one asking, and Android's own consent prompt still runs for this one image. Returns the id, or null.
+   */
+  fun requestFromUser(c: Context): String? {
+    val url = gateway ?: return null
+    if (!TalkState.running.value || Prefs.url(c) != url || pending.value != null) return null
+    val id = "user-" + java.util.UUID.randomUUID()
+    claimed = false
+    pending.value = Request(id, url, "You chose to show Hermes this screen.", fromUser = true)
+    timeout = Runnable { finish(c, error = "Screen sharing timed out.") }.also { main.postDelayed(it, 60000) }
+    return id
   }
 
   fun request(c: Context, id: String, reason: String) {
@@ -69,7 +86,7 @@ object ScreenRequests {
     timeout = Runnable { finish(c, error = "Screen approval timed out.") }.also { main.postDelayed(it, 60000) }
     val nm = c.getSystemService(NotificationManager::class.java)
     nm.createNotificationChannel(NotificationChannel("screen_requests", "Screenshot requests", NotificationManager.IMPORTANCE_DEFAULT))
-    val intent = Intent(c, ScreenConsentActivity::class.java).putExtra("request_id", id)
+    val intent = Intent(c, ScreenConsentActivity::class.java).putExtra("request_id", id).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     val tap = PendingIntent.getActivity(c, NOTICE, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
     try {
       nm.notify(NOTICE, NotificationCompat.Builder(c, "screen_requests")
@@ -90,12 +107,18 @@ object ScreenRequests {
     val request = pending.value ?: return
     val canSendImage = image != null && valid(c, request.id) && claimed
     pending.value = null
+    capturing.value = false
     timeout?.let(main::removeCallbacks)
     timeout = null
     val release = cleanup
     cleanup = null
     release?.invoke() // Stop projection BEFORE transmitting the single image.
     c.getSystemService(NotificationManager::class.java).cancel(NOTICE)
+    if (request.fromUser) {
+      // Nobody is waiting on the gateway side: send the image only if it was actually captured.
+      if (canSendImage) send?.invoke(JSONObject().put("type", "user_screenshot").put("image", image))
+      return
+    }
     send?.invoke(JSONObject().put("type", "device_result").put("id", request.id).apply {
       if (canSendImage) put("image", image)
       else put("error", error ?: "Screenshot cancelled or permission revoked.")

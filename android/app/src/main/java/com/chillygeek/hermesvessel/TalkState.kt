@@ -35,6 +35,12 @@ object TalkState {
   /** Hermes's words as they are spoken. */
   val liveCaption = MutableStateFlow("")
   val lines = MutableStateFlow<List<Pair<String, String>>>(emptyList())
+  /** Vessel's own screen is showing (the call button hides then). */
+  val appVisible = MutableStateFlow(false)
+  /** The floating call button is switched on in Settings. */
+  val bubbleOn = MutableStateFlow(false)
+  /** "Display over other apps" is granted (re-checked whenever Vessel comes back on screen). */
+  val overlayGranted = MutableStateFlow(false)
   /** null = not checked yet; true/false = the paired Hermes answered /health. */
   val hostOnline = MutableStateFlow<Boolean?>(null)
 

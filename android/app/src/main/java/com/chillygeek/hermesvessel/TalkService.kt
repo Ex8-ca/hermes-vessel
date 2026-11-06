@@ -111,6 +111,7 @@ class TalkService : Service() {
   @Volatile private var running = false
   @Volatile private var playEndAt = 0L
   private var callStartedAt = 0L
+  private var bubble: CallBubble? = null
 
   override fun onBind(intent: Intent?): IBinder? = null
 
@@ -128,6 +129,7 @@ class TalkService : Service() {
     TalkState.running.value = true
     TalkState.status.value = "connecting"
     callStartedAt = SystemClock.elapsedRealtime()
+    bubble = CallBubble(this).also { it.start() }
     routeAudio()
     connect()
     return START_NOT_STICKY
@@ -378,7 +380,11 @@ class TalkService : Service() {
       callStartedAt = 0L
     }
     running = false
-    android.os.Handler(mainLooper).post { ScreenRequests.detach(this) }
+    android.os.Handler(mainLooper).post {
+      ScreenRequests.detach(this)
+      bubble?.stop()
+      bubble = null
+    }
     instance = null
     TalkState.running.value = false
     TalkState.playing.value = false

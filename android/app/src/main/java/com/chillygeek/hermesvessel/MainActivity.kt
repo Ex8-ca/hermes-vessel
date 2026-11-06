@@ -120,13 +120,21 @@ class MainActivity : ComponentActivity() {
     handleIntent(intent)
   }
 
+  override fun onStart() {
+    super.onStart()
+    TalkState.appVisible.value = true
+  }
+
   override fun onResume() {
     super.onResume()
+    TalkState.overlayGranted.value = CallBubble.permitted(this)
+    TalkState.bubbleOn.value = CallBubble.enabled(this)
     if (demoJob == null && !TalkState.running.value) checkHealth()
   }
 
   override fun onStop() {
     super.onStop()
+    TalkState.appVisible.value = false
     stopPreview()
   }
 
