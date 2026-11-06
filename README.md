@@ -39,7 +39,7 @@ hermes plugins enable vessel
 
 ## Get the app
 
-On your Android phone, download **[hermes-vessel.apk](https://github.com/Ex8-ca/hermes-vessel/releases/latest/download/hermes-vessel.apk)** from the [latest release](https://github.com/Ex8-ca/hermes-vessel/releases/latest) and open it (allow installs from your browser if Android asks). The pairing page links to the same file. Each release is built from source by this repo's GitHub Actions, signed with the Hermes Vessel release key and carries a build attestation:
+On your Android phone, download **hermes-vessel.apk** from the [latest release](https://github.com/Ex8-ca/hermes-vessel/releases) and open it (allow installs from your browser if Android asks). The pairing page links to the same file. Each release is built from source by this repo's GitHub Actions, signed with the Hermes Vessel release key and carries a build attestation:
 
 ```bash
 gh attestation verify hermes-vessel.apk --repo Ex8-ca/hermes-vessel
