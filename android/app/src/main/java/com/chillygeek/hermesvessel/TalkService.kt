@@ -72,6 +72,16 @@ class TalkService : Service() {
       instance?.interruptSpeech()
     }
 
+    /** Send typed or pasted text into the live call, as if you had said it. False when there is no call. */
+    fun sendText(text: String): Boolean {
+      val clean = text.trim()
+      val socket = instance?.socket
+      if (clean.isEmpty() || socket == null) return false
+      val sent = socket.send(JSONObject().put("type", "text").put("text", clean).toString())
+      if (sent) TalkState.addLine("user", clean)
+      return sent
+    }
+
     /** Loudness 0..1 of a PCM16 little-endian chunk, on a speech-friendly dB curve. */
     fun level(buf: ByteArray, n: Int): Float {
       var sum = 0.0

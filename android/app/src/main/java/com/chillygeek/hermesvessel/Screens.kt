@@ -4,6 +4,7 @@ import androidx.annotation.DrawableRes
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -24,7 +25,9 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
@@ -40,6 +43,12 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -170,6 +179,7 @@ fun VesselApp(
   }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun CallScreen(
   host: String,
@@ -206,7 +216,12 @@ private fun CallScreen(
   }
 
   val screenHeight = LocalConfiguration.current.screenHeightDp
-  val orbSize = (screenHeight * 0.30f).coerceIn(180f, 290f).dp
+  // With the keyboard up there is no room for a big orb: shrink it and hide the call buttons so the text field stays visible.
+  val imeOpen = WindowInsets.isImeVisible
+  // A long reply also gets the room: shrink the orb so it can be read, scrolled and selected.
+  val replyText = live.ifBlank { lines.lastOrNull { it.first == "assistant" }?.second.orEmpty() }
+  val compact = imeOpen || replyText.length > 60
+  val orbSize by animateDpAsState(if (compact) 84.dp else (screenHeight * 0.30f).coerceIn(180f, 290f).dp, label = "orbSize")
 
   // The orb and title never move; captions take whatever space is left, newest words at the bottom.
   Column(
@@ -214,7 +229,7 @@ private fun CallScreen(
     horizontalAlignment = Alignment.CenterHorizontally,
   ) {
     Header(host = host, online = online, onSettings = onOpenSettings)
-    Spacer(Modifier.height((screenHeight * 0.05f).dp))
+    Spacer(Modifier.height(if (compact) 8.dp else (screenHeight * 0.05f).dp))
 
     val orbAction = when {
       state == "speaking" -> "Interrupt Hermes"
@@ -235,7 +250,7 @@ private fun CallScreen(
         .semantics { contentDescription = "Hermes: ${title(state, online)}" },
     )
 
-    Spacer(Modifier.height(30.dp))
+    Spacer(Modifier.height(if (compact) 8.dp else 30.dp))
     AnimatedContent(
       targetState = title(state, online),
       transitionSpec = { fadeIn(tween(350)) togetherWith fadeOut(tween(200)) },
@@ -276,7 +291,11 @@ private fun CallScreen(
     }
     Spacer(Modifier.height(20.dp))
     if (running) {
-      CallControls(muted = muted, onMute = onMute, onEnd = onEnd)
+      MessageBar()
+      if (!imeOpen) {
+        Spacer(Modifier.height(16.dp))
+        CallControls(muted = muted, onMute = onMute, onEnd = onEnd)
+      }
     } else {
       PrimaryButton(if (state == "error") "Try again" else "Talk to Hermes", enabled = true, onClick = onTalk)
     }
@@ -386,21 +405,76 @@ private fun HostChip(host: String, online: Boolean?, onClick: () -> Unit) {
 private fun Captions(lines: List<Pair<String, String>>, live: String) {
   val lastUser = lines.lastOrNull { it.first == "user" }?.second.orEmpty()
   val hermes = live.ifBlank { lines.lastOrNull { it.first == "assistant" }?.second.orEmpty() }
-  // While Hermes is mid-sentence keep the newest words in view.
-  val shown = if (hermes.length > 220) "…" + hermes.takeLast(220).substringAfter(' ') else hermes
-  Column(Modifier.fillMaxWidth().animateContentSize()) {
+  val clipboard = LocalClipboardManager.current
+  var copied by remember { mutableStateOf(false) }
+  LaunchedEffect(hermes) { copied = false }
+  // The whole reply stays readable and selectable (long-press to select, then Copy); the newest words stay in view.
+  val scroll = rememberScrollState()
+  LaunchedEffect(hermes.length, lastUser) { scroll.animateScrollTo(scroll.maxValue) }
+  // The label row is outside the selectable text so tapping Copy never fights a text selection.
+  Column(Modifier.fillMaxWidth().verticalScroll(scroll).animateContentSize()) {
     if (lastUser.isNotEmpty()) {
       Text("YOU", style = Type.overline)
       Spacer(Modifier.height(4.dp))
-      Text(lastUser, style = Type.user, maxLines = 2, overflow = TextOverflow.Ellipsis)
+      SelectionContainer { Text(lastUser, style = Type.user) }
       Spacer(Modifier.height(16.dp))
     }
-    if (shown.isNotEmpty()) {
-      Text("HERMES", style = Type.overline.copy(color = Gold.copy(alpha = 0.85f)))
+    if (hermes.isNotEmpty()) {
+      Row(verticalAlignment = Alignment.CenterVertically) {
+        Text("HERMES", style = Type.overline.copy(color = Gold.copy(alpha = 0.85f)))
+        Spacer(Modifier.width(12.dp))
+        Text(
+          if (copied) "Copied" else "Copy",
+          style = Type.overline.copy(color = Ivory.copy(alpha = 0.6f)),
+          modifier = Modifier
+            .clip(RoundedCornerShape(50))
+            .clickable(role = Role.Button, onClickLabel = "Copy Hermes's reply") {
+              clipboard.setText(AnnotatedString(hermes))
+              copied = true
+            }
+            .padding(horizontal = 8.dp, vertical = 2.dp),
+        )
+      }
       Spacer(Modifier.height(4.dp))
-      Text(shown, style = Type.hermes, maxLines = 5, overflow = TextOverflow.Ellipsis)
+      SelectionContainer { Text(hermes, style = Type.hermes) }
     }
   }
+}
+
+/** Type or paste something to say to Hermes during a call. */
+@Composable
+private fun MessageBar() {
+  var text by remember { mutableStateOf("") }
+  val clipboard = LocalClipboardManager.current
+  fun send() {
+    if (TalkService.sendText(text)) text = ""
+  }
+  OutlinedTextField(
+    value = text,
+    onValueChange = { text = it },
+    maxLines = 3,
+    placeholder = { Text("Type or paste a message", style = Type.label) },
+    trailingIcon = {
+      if (text.isBlank()) {
+        TextButton(onClick = { clipboard.getText()?.text?.let { text = it } }) { Text("Paste", color = Gold) }
+      } else {
+        TextButton(onClick = { send() }) { Text("Send", color = Gold) }
+      }
+    },
+    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+    keyboardActions = KeyboardActions(onSend = { send() }),
+    shape = RoundedCornerShape(16.dp),
+    colors = OutlinedTextFieldDefaults.colors(
+      focusedBorderColor = Gold,
+      unfocusedBorderColor = Color.White.copy(alpha = 0.14f),
+      focusedTextColor = Ivory,
+      unfocusedTextColor = Ivory,
+      cursorColor = Gold,
+      focusedContainerColor = Color.White.copy(alpha = 0.03f),
+      unfocusedContainerColor = Color.White.copy(alpha = 0.03f),
+    ),
+    modifier = Modifier.fillMaxWidth().widthIn(max = 420.dp),
+  )
 }
 
 @Composable
