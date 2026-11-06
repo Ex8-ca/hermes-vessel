@@ -100,6 +100,17 @@ class RouteTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(s.http.sent["chat_template_kwargs"]["enable_thinking"])
         self.assertLessEqual(s.http.sent["max_tokens"], 8)  # decision only
 
+    async def test_context_only_for_short_follow_ups_and_never_after_a_holding_line(self):
+        s = self.session({"content": "Hi"})
+        s.last_user, s.last_reply = "what's the weather tomorrow", "Sure thing, I'll check that for you. One sec,"
+        await s.route("and the day after?")
+        self.assertEqual(len(s.http.sent["messages"]), 2)  # after a holding line: no context
+        s.last_reply = "It'll be sunny and 15 degrees."
+        await s.route("and the day after?")
+        self.assertEqual(len(s.http.sent["messages"]), 4)  # short follow-up: context
+        await s.route("why is the sky blue keep it short")
+        self.assertEqual(len(s.http.sent["messages"]), 2)  # a new question stands alone
+
     async def test_chat_returns_none(self):
         s = self.session({"content": "Hi there!"})
         self.assertIsNone(await s.route("hey"))
@@ -254,6 +265,15 @@ class GuardTests(unittest.IsolatedAsyncioTestCase):
         s.turn, s.routed = 10, 9
         await s.check_reply("I can't turn off lights since I can't control physical devices.")
         self.assertTrue(s.drop_until_listen)
+
+    async def test_guessing_while_hermes_works_is_cut(self):
+        s = self.session()
+        s.turn = s.routed = s.handed_off = 11
+        await s.check_reply("One sec, let me check.")
+        self.assertFalse(s.drop_until_listen)            # a holding line is fine
+        await s.check_reply("One sec, let me check. RESULT: Tomorrow will be partly cloudy")
+        self.assertTrue(s.drop_until_listen)             # an invented answer is not
+        self.assertEqual(s.after_quiet, "")
 
     async def test_plain_chat_is_untouched(self):
         s = self.session()

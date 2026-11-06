@@ -70,7 +70,7 @@ and talks (you can cut in), Whisper turns your words into text, and a small mode
 (MiniCPM5-2B, 0.1 s, 57/57 held-out tool requests) hands anything that needs tools to Hermes, whose answer the
 voice then says. Screenshots go to Hermes too. It all fits on one 16 GB NVIDIA card; `tools/local_voice/install.sh`
 sets it up and `hermes vessel local` connects it. Setup: [`tools/local_voice/README.md`](tools/local_voice/README.md);
-the model: [burtlelife/vessel-handoff-MiniCPM5-2B](https://huggingface.co/burtlelife/vessel-handoff-MiniCPM5-2B);
+the model: [BurtleLife/vessel-handoff-MiniCPM5-2B](https://huggingface.co/BurtleLife/vessel-handoff-MiniCPM5-2B);
 how it was built and measured: [`docs/local-voice.md`](docs/local-voice.md).
 
 ## The Android app

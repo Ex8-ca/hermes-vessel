@@ -21,7 +21,7 @@ All three parts fit on **one 16 GB NVIDIA card** (tested: RTX 5080, card peak 14
 |---|---|---|---|
 | `duplex_worker.py`: MiniCPM-o 4.5, 4-bit (NF4) language model; hearing and speech stay bf16 | GPU | 12.6 GB peak | 8797 |
 | `stt_server.py`: faster-whisper turbo, int8 | GPU | 1.3 GB | 8798 |
-| Hand-off model: [burtlelife/vessel-handoff-MiniCPM5-2B](https://huggingface.co/burtlelife/vessel-handoff-MiniCPM5-2B) (Q6_K) in llama.cpp | CPU | 2 GB RAM | 8799 |
+| Hand-off model: [BurtleLife/vessel-handoff-MiniCPM5-2B](https://huggingface.co/BurtleLife/vessel-handoff-MiniCPM5-2B) (Q6_K) in llama.cpp | CPU | 2 GB RAM | 8799 |
 
 On a 24 GB card the voice model runs at full precision (~21 GB) instead. Both base models are Apache-2.0.
 

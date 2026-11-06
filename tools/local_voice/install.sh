@@ -32,8 +32,8 @@ done
 # Pinned sources (bump deliberately, after testing).
 VOICE_REPO="openbmb/MiniCPM-o-4_5"
 VOICE_REV="eb4141de24550a3a1a4082f718be58f46b761728"
-HANDOFF_REPO="burtlelife/vessel-handoff-MiniCPM5-2B"
-HANDOFF_REV="__HANDOFF_REV__"
+HANDOFF_REPO="BurtleLife/vessel-handoff-MiniCPM5-2B"
+HANDOFF_REV="6b2d78bd1891f96f4c10cae8808f15615ed12d97"
 HANDOFF_FILE="MiniCPM5-2B-vessel-handoff-Q6_K.gguf"
 LLAMA_TAG="b12177"
 LLAMA_TGZ="llama-${LLAMA_TAG}-bin-ubuntu-x64.tar.gz"
@@ -53,7 +53,8 @@ if [ "$QUANT" = "auto" ]; then
   if [ "$GPU_MB" -ge 23000 ]; then QUANT="none"; else QUANT="nf4"; fi
 fi
 MAX_GIB=0
-[ "$QUANT" = "nf4" ] && MAX_GIB=$(( GPU_MB / 1024 - 3 ))  # leave ~3 GB for speech-to-text
+# Leave ~2.9 GB for speech-to-text and CUDA overhead: 13.0 GiB on a 16 GB card, where the voice peaks at 12.6.
+[ "$QUANT" = "nf4" ] && MAX_GIB=$(awk -v mb="$GPU_MB" 'BEGIN { printf "%.1f", int((mb - 2900) / 1024 * 10) / 10 }')
 say "GPU: ${GPU_MB} MB -> voice model precision: $QUANT${MAX_GIB:+ (capped at ${MAX_GIB} GiB)}"
 
 mkdir -p "$DIR"
@@ -97,10 +98,30 @@ fi
 chmod 600 "$DIR/worker_token"
 TOKEN="$(cat "$DIR/worker_token")"
 
-# Half the CPU threads for the hand-off model, so the voice worker keeps enough to stay real time.
-THREADS=$(( $(nproc) / 2 )); [ "$THREADS" -ge 2 ] || THREADS=2
+# CPU placement. The hand-off model on the same cores as the voice worker made the voice fall behind real time
+# (measured: chunks 0.28 -> 0.74 s, stalls of 2-3 s). On a hybrid CPU (Intel P/E cores: different max clocks), give
+# the hand-off model the slower cores and the voice the faster ones; everywhere, run the hand-off model at low
+# priority with a quarter of the threads.
+FAST="" SLOW=""
+if ls /sys/devices/system/cpu/cpu[0-9]*/cpufreq/cpuinfo_max_freq >/dev/null 2>&1; then
+  TOP=$(cat /sys/devices/system/cpu/cpu[0-9]*/cpufreq/cpuinfo_max_freq | sort -n | tail -1)
+  for f in /sys/devices/system/cpu/cpu[0-9]*/cpufreq/cpuinfo_max_freq; do
+    n=$(echo "$f" | sed -E 's#.*/cpu([0-9]+)/cpufreq.*#\1#')
+    if [ "$(cat "$f")" -ge "$TOP" ]; then FAST="$FAST $n"; else SLOW="$SLOW $n"; fi
+  done
+fi
+NFAST=$(echo $FAST | wc -w); NSLOW=$(echo $SLOW | wc -w)
+VOICE_AFFINITY="" ROUTER_AFFINITY=""
+if [ "$NSLOW" -ge 2 ] && [ "$NFAST" -ge 4 ]; then
+  VOICE_AFFINITY="CPUAffinity=$(echo $FAST)"
+  ROUTER_AFFINITY="CPUAffinity=$(echo $SLOW)"
+  THREADS=$NSLOW
+  say "Hybrid CPU: voice on cores$FAST; hand-off model on cores$SLOW"
+else
+  THREADS=$(( $(nproc) / 4 )); [ "$THREADS" -ge 2 ] || THREADS=2
+fi
 VOICE_ARGS="--model $DIR/MiniCPM-o-4_5 --quant $QUANT --host $LISTEN --port 8797 --token-file $DIR/worker_token"
-[ "$MAX_GIB" -gt 0 ] && VOICE_ARGS="$VOICE_ARGS --max-gpu-gib $MAX_GIB"
+[ "$MAX_GIB" != 0 ] && VOICE_ARGS="$VOICE_ARGS --max-gpu-gib $MAX_GIB"
 
 if [ "$SERVICES" = 1 ]; then
   say "systemd user services"
@@ -115,6 +136,7 @@ After=network-online.target
 WorkingDirectory=$DIR
 Environment=PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 UnsetEnvironment=PYTHONPATH PYTHONHOME
+$VOICE_AFFINITY
 ExecStart=$PY $DIR/duplex_worker.py $VOICE_ARGS
 Restart=on-failure
 RestartSec=10
@@ -143,6 +165,9 @@ Description=Vessel local voice: hand-off model (CPU)
 [Service]
 # CPU only: the GPU belongs to the voice model and speech-to-text.
 Environment=CUDA_VISIBLE_DEVICES=
+# Low priority (and the slower cores, if any): the voice must stay real time.
+Nice=10
+$ROUTER_AFFINITY
 ExecStart=$DIR/llama.cpp/llama-server -m $DIR/handoff/$HANDOFF_FILE -a handoff --host $LISTEN --port 8799 -ngl 0 -t $THREADS -c 4096 --jinja --min-p 0.0 -np 1 --api-key-file $DIR/worker_token
 Restart=on-failure
 RestartSec=10
@@ -151,7 +176,9 @@ RestartSec=10
 WantedBy=default.target
 EOF
   systemctl --user daemon-reload
-  systemctl --user enable -q --now vessel-local-stt.service vessel-local-router.service vessel-local-voice.service
+  systemctl --user enable -q vessel-local-stt.service vessel-local-router.service vessel-local-voice.service
+  # restart, not just start: a re-run must apply changed settings to services that are already running
+  systemctl --user restart vessel-local-stt.service vessel-local-router.service vessel-local-voice.service
   loginctl enable-linger "$USER" 2>/dev/null || echo "(run 'sudo loginctl enable-linger $USER' to keep them running after logout)"
   say "Waiting for the voice model to load (up to 3 minutes)"
   for _ in $(seq 1 90); do curl -sf -m 2 "http://$LISTEN:8797/health" >/dev/null && break; sleep 2; done

@@ -524,6 +524,14 @@ class LocalSession:
                 await self.cut(HOLD_NOTE)
             await self.recover()
             return
+        if self.handed_off == self.turn and self.result_turn != self.turn:
+            # Hermes is working on it: anything beyond a holding line is the voice guessing (it once invented a
+            # forecast, even starting it with "RESULT:").
+            rest = HOLDING.sub("", reply)
+            if "RESULT" in reply.upper() or len(re.findall(r"[A-Za-z']+", rest)) > 8:
+                log.info("local voice guessed while Hermes works (%r); cut", reply[:80])
+                await self.cut("")
+                return
         if self.result_turn == self.turn:
             # It's relaying Hermes' answer now. "I couldn't turn them off" is the answer, not a refusal; but a
             # number Hermes never said is a misreading (the 4-bit model once said 32 GB for 23 GB).
@@ -564,7 +572,8 @@ class LocalSession:
         if request is None:
             # One utterance can hold two things (a remark, then a question; or the end of Hermes' own voice
             # leaking into the mic before the question). The decision follows the first, so check the last too.
-            parts = [p for p in re.split(r"(?<=[.?!])\s+", text.strip()) if len(p.split()) >= 3]
+            # (the last part must be a real request: "Keep it short." alone once sent "why is the sky blue" to Hermes)
+            parts = [p for p in re.split(r"(?<=[.?!])\s+", text.strip()) if len(p.split()) >= 5]
             if len(parts) > 1 and await self.route(parts[-1]) is not None:
                 request = text
         self.last_user, self.routed = text, turn
@@ -691,7 +700,9 @@ class LocalSession:
 
     def route_body(self, text: str) -> dict:
         messages = [{"role": "system", "content": ROUTER_SYSTEM}]
-        if self.last_user and self.last_reply:
+        # The previous exchange helps with short follow-ups ("and tomorrow?"), but a holding line before it
+        # ("Sure, I'll check that, one sec") pulled the next, unrelated question ("why is the sky blue?") to Hermes.
+        if (self.last_user and self.last_reply and len(text.split()) <= 5 and not HOLDING.search(self.last_reply)):
             messages += [{"role": "user", "content": self.last_user}, {"role": "assistant", "content": self.last_reply}]
         messages.append({"role": "user", "content": text})
         # Only the decision is needed: the model was trained to pass the user's own words on unchanged, and we already
