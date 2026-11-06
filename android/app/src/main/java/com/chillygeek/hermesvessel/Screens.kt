@@ -248,7 +248,8 @@ private fun CallScreen(
       subtitle(state, online, detail, route, elapsed, lastCall),
       style = Type.body,
       textAlign = TextAlign.Center,
-      maxLines = 2,
+      // Errors can carry a "retry after…" time the user needs to read, so let them wrap fully.
+      maxLines = if (state == "error") 8 else 2,
       overflow = TextOverflow.Ellipsis,
       modifier = Modifier.widthIn(max = 340.dp),
     )

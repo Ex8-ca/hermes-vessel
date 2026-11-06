@@ -225,6 +225,22 @@ class VesselError(RuntimeError):
     pass
 
 
+def humanize_retry(message: str) -> str:
+    """Turn "retry after 4848s" into "retry after about 1h 21m" so a person can read the wait."""
+    import re
+
+    def repl(m: "re.Match") -> str:
+        secs = int(m.group(1))
+        h, rem = divmod(secs, 3600)
+        mins = (rem + 59) // 60
+        if mins == 60:
+            h, mins = h + 1, 0
+        parts = ([f"{h}h"] if h else []) + ([f"{mins}m"] if mins or not h else [])
+        return "retry after about " + " ".join(parts)
+
+    return re.sub(r"retry after (\d+)s", repl, message)
+
+
 def mint_client_secret(voice: Optional[str] = None) -> str:
     """Mint a short-lived OpenAI Realtime secret with the user's Codex sign-in.
 
@@ -409,7 +425,7 @@ class PhoneSession:
             secret = await asyncio.to_thread(mint_client_secret, self.voice)
         except Exception as exc:  # noqa: BLE001 - surfaced to the phone
             log.warning("mint failed: %s", exc)
-            await self.send_json({"type": "error", "message": f"Couldn't start the voice session: {exc}"})
+            await self.send_json({"type": "error", "message": f"Couldn't start the voice session: {humanize_retry(str(exc))}"})
             return
         try:
             async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=None, sock_connect=20)) as http:
